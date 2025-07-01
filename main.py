@@ -228,78 +228,63 @@ class DeepSeekAPI:
     
     def _create_synthetic_dataset(self, original_data: pd.DataFrame, params: Dict, 
                                 variables: List[str], n_samples: int) -> pd.DataFrame:
-        """Create synthetic dataset using AI-generated parameters with exact scaling"""
+        """Create synthetic dataset using intelligent variable type detection"""
         
         synthetic_data = {}
         
-        # Generate variables while preserving exact scale ranges
         for var in variables:
             if var in original_data.columns:
-                if original_data[var].dtype in ['int64', 'float64']:
-                    # Preserve exact min/max scaling
-                    orig_min = float(original_data[var].min())
-                    orig_max = float(original_data[var].max())
-                    orig_mean = float(original_data[var].mean())
-                    orig_std = float(original_data[var].std())
-                    
-                    # Generate data with same statistical properties
-                    synthetic_values = np.random.normal(orig_mean, orig_std, n_samples)
-                    
-                    # Clip to exact original range
-                    synthetic_values = np.clip(synthetic_values, orig_min, orig_max)
-                    
-                    synthetic_data[var] = synthetic_values
+                # Detect variable characteristics
+                var_info = detect_variable_type(original_data[var])
+                
+                # Generate synthetic data matching exact characteristics
+                synthetic_values = generate_synthetic_variable(var_info, n_samples, original_data[var])
+                synthetic_data[var] = synthetic_values
+            else:
+                # Handle additional variables not in original data
+                # Generate reasonable defaults based on variable name
+                if any(keyword in var.lower() for keyword in ['age']):
+                    synthetic_data[var] = np.random.randint(18, 80, n_samples)
+                elif any(keyword in var.lower() for keyword in ['income', 'salary']):
+                    synthetic_data[var] = np.random.normal(50000, 20000, n_samples)
+                elif any(keyword in var.lower() for keyword in ['satisfaction', 'rating', 'score']):
+                    synthetic_data[var] = np.random.randint(1, 6, n_samples)  # 1-5 scale
                 else:
-                    # For categorical variables, sample from original distribution
-                    unique_vals = original_data[var].dropna().unique()
-                    value_counts = original_data[var].value_counts(normalize=True)
-                    synthetic_data[var] = np.random.choice(
-                        unique_vals, 
-                        n_samples, 
-                        p=[value_counts.get(val, 0) for val in unique_vals]
-                    )
+                    # Default to normal distribution
+                    synthetic_data[var] = np.random.normal(0, 1, n_samples)
         
         return pd.DataFrame(synthetic_data)
     
     def _create_fallback_synthetic_data(self, original_data: pd.DataFrame, 
                                       variables: List[str], n_samples: int) -> pd.DataFrame:
-        """Fallback method to create synthetic data with exact scaling preservation"""
+        """Fallback method using intelligent variable type detection"""
         
         synthetic_data = {}
         
         for var in variables:
             if var in original_data.columns:
-                if original_data[var].dtype in ['int64', 'float64']:
-                    # Preserve exact min/max scaling
-                    orig_min = float(original_data[var].min())
-                    orig_max = float(original_data[var].max())
-                    orig_mean = float(original_data[var].mean())
-                    orig_std = float(original_data[var].std())
-                    
-                    # Generate data with same statistical properties
-                    synthetic_values = np.random.normal(orig_mean, orig_std, n_samples)
-                    
-                    # Clip to exact original range
-                    synthetic_values = np.clip(synthetic_values, orig_min, orig_max)
-                    
-                    synthetic_data[var] = synthetic_values
+                # Use intelligent variable detection
+                var_info = detect_variable_type(original_data[var])
+                synthetic_values = generate_synthetic_variable(var_info, n_samples, original_data[var])
+                synthetic_data[var] = synthetic_values
+            else:
+                # Handle additional variables with smart defaults
+                if any(keyword in var.lower() for keyword in ['age']):
+                    synthetic_data[var] = np.random.randint(18, 80, n_samples)
+                elif any(keyword in var.lower() for keyword in ['income', 'salary']):
+                    synthetic_data[var] = np.random.normal(50000, 20000, n_samples)
+                elif any(keyword in var.lower() for keyword in ['satisfaction', 'rating', 'score']):
+                    synthetic_data[var] = np.random.randint(1, 6, n_samples)
                 else:
-                    # For categorical variables, preserve original distribution
-                    unique_vals = original_data[var].dropna().unique()
-                    value_counts = original_data[var].value_counts(normalize=True)
-                    synthetic_data[var] = np.random.choice(
-                        unique_vals, 
-                        n_samples, 
-                        p=[value_counts.get(val, 0) for val in unique_vals]
-                    )
+                    synthetic_data[var] = np.random.normal(0, 1, n_samples)
         
         return pd.DataFrame(synthetic_data)
 
-    def analyze_pdf_document(self, pdf_content: bytes) -> str:
+    def analyze_pdf_document(self, pdf_content: bytes) -> Dict[str, Any]:
         """Analyze PDF document for variable context and suggestions"""
         
         if not PDF_AVAILABLE:
-            return "PDF analysis not available. Please install PyPDF2."
+            return {"analysis": "PDF analysis not available. Please install PyPDF2.", "variable_suggestions": {}}
         
         try:
             # Extract text from PDF
@@ -313,31 +298,28 @@ class DeepSeekAPI:
                 text = text[:8000] + "..."
             
             prompt = f"""
-            Analyze this research document/codebook/survey and provide:
-            
-            ## DOCUMENT ANALYSIS
-            
+            Analyze this research document/codebook/survey and provide variable descriptions that can be automatically used.
+
             Document text:
             {text}
-            
-            Please provide:
-            
-            ## 1. VARIABLE CONTEXT SUGGESTIONS
-            Based on the document, suggest what each variable mentioned might represent and its role in the study.
-            
-            ## 2. STUDY CONTEXT
-            Provide a brief summary of the research context, methodology, and objectives.
-            
-            ## 3. VARIABLE RELATIONSHIPS
-            Suggest likely relationships between variables based on the research design.
-            
-            ## 4. ADDITIONAL VARIABLES TO CONSIDER
-            Based on the research domain, suggest additional variables that might be relevant.
-            
-            ## 5. METHODOLOGICAL CONSIDERATIONS
-            Any special considerations for analysis based on the study design.
-            
-            Format with clear markdown headers.
+
+            Please provide a JSON response with this exact structure:
+            {{
+                "analysis": "Brief summary of the research context and methodology",
+                "variable_suggestions": {{
+                    "variable_name_1": "Clear, concise description of what this variable measures",
+                    "variable_name_2": "Clear, concise description of what this variable measures",
+                    ...
+                }},
+                "additional_variables": {{
+                    "suggested_var_1": "Why this variable would enhance the study",
+                    "suggested_var_2": "Why this variable would enhance the study",
+                    ...
+                }}
+            }}
+
+            Focus on identifying specific variable names that might appear in a dataset and provide practical descriptions.
+            Keep descriptions under 100 characters each.
             """
             
             response = requests.post(
@@ -346,20 +328,122 @@ class DeepSeekAPI:
                 json={
                     "model": "deepseek-chat",
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.6,
-                    "max_tokens": 2500
+                    "temperature": 0.3,
+                    "max_tokens": 2000
                 }
             )
             
             if response.status_code == 200:
-                return response.json()['choices'][0]['message']['content']
+                ai_response = response.json()['choices'][0]['message']['content']
+                
+                # Try to extract JSON from the response
+                try:
+                    json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+                    if json_match:
+                        return json.loads(json_match.group())
+                    else:
+                        return {"analysis": ai_response, "variable_suggestions": {}}
+                except json.JSONDecodeError:
+                    return {"analysis": ai_response, "variable_suggestions": {}}
             else:
-                return f"Error analyzing PDF: {response.status_code}"
+                return {"analysis": f"Error analyzing PDF: {response.status_code}", "variable_suggestions": {}}
                 
         except Exception as e:
-            return f"Error processing PDF: {str(e)}"
+            return {"analysis": f"Error processing PDF: {str(e)}", "variable_suggestions": {}}
 
-def extract_suggested_variables(analysis_text: str) -> List[str]:
+def detect_variable_type(series: pd.Series) -> Dict[str, Any]:
+    """Detect variable type and characteristics for exact replication"""
+    
+    var_info = {
+        'type': 'unknown',
+        'min_val': None,
+        'max_val': None,
+        'unique_count': series.nunique(),
+        'is_integer': False,
+        'scale_type': 'unknown'
+    }
+    
+    # Remove NaN values for analysis
+    clean_series = series.dropna()
+    
+    if len(clean_series) == 0:
+        return var_info
+    
+    # Check if numeric
+    if pd.api.types.is_numeric_dtype(clean_series):
+        var_info['type'] = 'numeric'
+        var_info['min_val'] = float(clean_series.min())
+        var_info['max_val'] = float(clean_series.max())
+        var_info['is_integer'] = clean_series.dtype in ['int32', 'int64'] or all(clean_series == clean_series.astype(int))
+        
+        # Detect scale patterns
+        unique_vals = sorted(clean_series.unique())
+        
+        # Binary variable detection
+        if len(unique_vals) == 2:
+            var_info['scale_type'] = 'binary'
+            var_info['categories'] = unique_vals
+        
+        # Likert scale detection (1-5, 1-7, etc.)
+        elif (len(unique_vals) <= 10 and 
+              var_info['min_val'] >= 1 and 
+              var_info['is_integer'] and
+              unique_vals == list(range(int(var_info['min_val']), int(var_info['max_val']) + 1))):
+            var_info['scale_type'] = f"likert_{int(var_info['min_val'])}_{int(var_info['max_val'])}"
+            var_info['categories'] = unique_vals
+        
+        # Continuous numeric
+        else:
+            var_info['scale_type'] = 'continuous'
+    
+    # Categorical variable
+    else:
+        var_info['type'] = 'categorical'
+        var_info['scale_type'] = 'categorical'
+        var_info['categories'] = clean_series.unique().tolist()
+        var_info['category_counts'] = clean_series.value_counts().to_dict()
+    
+    return var_info
+
+def generate_synthetic_variable(var_info: Dict, n_samples: int, original_series: pd.Series) -> np.ndarray:
+    """Generate synthetic data that exactly matches original variable characteristics"""
+    
+    if var_info['type'] == 'numeric':
+        
+        if var_info['scale_type'] == 'binary':
+            # Binary variable - maintain exact proportions
+            unique_vals = var_info['categories']
+            value_counts = original_series.value_counts(normalize=True)
+            return np.random.choice(unique_vals, n_samples, p=[value_counts.get(val, 0.5) for val in unique_vals])
+        
+        elif var_info['scale_type'].startswith('likert'):
+            # Likert scale - maintain distribution
+            unique_vals = var_info['categories']
+            value_counts = original_series.value_counts(normalize=True)
+            probs = [value_counts.get(val, 1/len(unique_vals)) for val in unique_vals]
+            return np.random.choice(unique_vals, n_samples, p=probs)
+        
+        else:
+            # Continuous - normal distribution with exact bounds
+            mean = float(original_series.mean())
+            std = float(original_series.std())
+            
+            # Generate values and clip to exact bounds
+            synthetic_vals = np.random.normal(mean, std, n_samples)
+            synthetic_vals = np.clip(synthetic_vals, var_info['min_val'], var_info['max_val'])
+            
+            # If original was integer, round to integers
+            if var_info['is_integer']:
+                synthetic_vals = np.round(synthetic_vals).astype(int)
+            
+            return synthetic_vals
+    
+    else:
+        # Categorical variable - maintain exact proportions
+        categories = var_info['categories']
+        value_counts = original_series.value_counts(normalize=True)
+        probs = [value_counts.get(cat, 1/len(categories)) for cat in categories]
+        return np.random.choice(categories, n_samples, p=probs)
     """Extract suggested variables from AI analysis"""
     variables = []
     
@@ -368,7 +452,8 @@ def extract_suggested_variables(analysis_text: str) -> List[str]:
     in_variables_section = False
     
     for line in lines:
-        if 'SUGGESTED' in line.upper() and 'VARIABLE' in line.upper():
+        # Updated patterns to match new format
+        if any(keyword in line.upper() for keyword in ['RECOMMENDED ADDITIONAL', 'SUGGESTED ADDITIONAL', 'ADDITIONAL VARIABLES']):
             in_variables_section = True
             continue
         elif line.startswith('#') and in_variables_section:
@@ -380,12 +465,14 @@ def extract_suggested_variables(analysis_text: str) -> List[str]:
                 var_match = re.search(r'[-*•]\s*([^:]+)', line)
                 if var_match:
                     var_name = var_match.group(1).strip()
-                    if len(var_name) < 50:  # Reasonable variable name length
+                    # Clean up variable names
+                    var_name = re.sub(r'\(.*?\)', '', var_name).strip()  # Remove parentheses content
+                    if len(var_name) < 50 and len(var_name) > 2:  # Reasonable variable name length
                         variables.append(var_name)
     
     return variables[:8]  # Limit to 8 suggestions
 
-def create_download_button(data: pd.DataFrame, filename: str, file_format: str = 'csv'):
+def extract_suggested_variables(analysis_text: str) -> List[str]:
     """Create download button for synthetic data"""
     
     if file_format == 'csv':
@@ -556,13 +643,34 @@ def main():
                 
                 if st.button("🔍 Analyze PDF Document"):
                     with st.spinner("Analyzing PDF document..."):
-                        pdf_analysis = deepseek_client.analyze_pdf_document(pdf_content)
-                        st.session_state.pdf_analysis = pdf_analysis
+                        pdf_analysis_result = deepseek_client.analyze_pdf_document(pdf_content)
+                        st.session_state.pdf_analysis = pdf_analysis_result
                 
                 # Display PDF analysis results
                 if 'pdf_analysis' in st.session_state:
                     st.subheader("📄 PDF Analysis Results")
-                    st.markdown(st.session_state.pdf_analysis)
+                    
+                    pdf_data = st.session_state.pdf_analysis
+                    
+                    if isinstance(pdf_data, dict):
+                        # Display analysis summary
+                        if 'analysis' in pdf_data:
+                            st.markdown("**📋 Study Context:**")
+                            st.write(pdf_data['analysis'])
+                        
+                        # Show variable suggestions that will be auto-populated
+                        if 'variable_suggestions' in pdf_data and pdf_data['variable_suggestions']:
+                            st.markdown("**🏷️ Variable Descriptions Found (will auto-populate in Variable Selection):**")
+                            for var, desc in pdf_data['variable_suggestions'].items():
+                                st.info(f"**{var}**: {desc}")
+                        
+                        # Show additional variable suggestions
+                        if 'additional_variables' in pdf_data and pdf_data['additional_variables']:
+                            st.markdown("**💡 Additional Variables Suggested:**")
+                            for var, reason in pdf_data['additional_variables'].items():
+                                st.success(f"**{var}**: {reason}")
+                    else:
+                        st.markdown(pdf_data)
         else:
             st.warning("PDF analysis not available. Install PyPDF2 to enable this feature.")
             st.code("pip install PyPDF2", language="bash")
@@ -576,7 +684,7 @@ def main():
         
         df = st.session_state.df
         
-        # Variable descriptions
+        # Variable descriptions with auto-population from PDF
         st.subheader("📝 Variable Descriptions")
         st.markdown("Provide brief descriptions for your variables to help the AI understand the context:")
         
@@ -584,15 +692,62 @@ def main():
         if 'var_descriptions' not in st.session_state:
             st.session_state.var_descriptions = {}
         
+        # Get PDF suggestions if available
+        pdf_suggestions = {}
+        if 'pdf_analysis' in st.session_state and isinstance(st.session_state.pdf_analysis, dict):
+            pdf_suggestions = st.session_state.pdf_analysis.get('variable_suggestions', {})
+        
+        # Auto-populate from PDF analysis if available
+        if pdf_suggestions:
+            st.success(f"✅ Found {len(pdf_suggestions)} variable descriptions from your PDF analysis!")
+            if st.button("🔄 Auto-populate from PDF"):
+                for var_name, description in pdf_suggestions.items():
+                    # Find matching variables (case-insensitive, partial matching)
+                    for col in df.columns:
+                        if (var_name.lower() in col.lower() or 
+                            col.lower() in var_name.lower() or 
+                            var_name.lower() == col.lower()):
+                            st.session_state.var_descriptions[col] = description
+                st.rerun()
+        
         variable_descriptions = {}
         
         for col in df.columns:
+            # Auto-detect variable characteristics
+            var_info = detect_variable_type(df[col])
+            
+            # Create helpful placeholder based on variable type
+            if var_info['scale_type'] == 'binary':
+                placeholder = f"Binary variable (0/1 or {var_info['categories']})"
+            elif var_info['scale_type'].startswith('likert'):
+                scale_range = var_info['scale_type'].split('_')[1:3]
+                placeholder = f"Likert scale {scale_range[0]}-{scale_range[1]} (e.g., strongly disagree to strongly agree)"
+            elif var_info['scale_type'] == 'categorical':
+                placeholder = f"Categorical variable ({var_info['unique_count']} categories)"
+            else:
+                placeholder = f"Numeric variable (range: {var_info['min_val']:.2f} to {var_info['max_val']:.2f})"
+            
+            # Try to find matching PDF suggestion
+            pdf_suggestion = ""
+            current_value = st.session_state.var_descriptions.get(col, "")
+            
+            if not current_value and pdf_suggestions:
+                for pdf_var, pdf_desc in pdf_suggestions.items():
+                    if (pdf_var.lower() in col.lower() or 
+                        col.lower() in pdf_var.lower() or 
+                        pdf_var.lower() == col.lower()):
+                        current_value = pdf_desc
+                        st.session_state.var_descriptions[col] = pdf_desc
+                        break
+            
             description = st.text_input(
-                f"Description for '{col}':",
-                value=st.session_state.var_descriptions.get(col, ""),
+                f"Description for '{col}' ({var_info['scale_type']}):",
+                value=current_value,
                 key=f"desc_{col}",
-                placeholder=f"Brief description of {col}..."
+                placeholder=placeholder,
+                help=f"Detected as {var_info['scale_type']} variable. {placeholder}"
             )
+            
             if description:
                 variable_descriptions[col] = description
                 st.session_state.var_descriptions[col] = description
@@ -631,8 +786,49 @@ def main():
         st.session_state.selected_independent_vars = independent_vars
         st.session_state.selected_control_vars = control_vars
         
-        # Show correlation analysis
+        # Show variable type analysis
         if dependent_var and independent_vars:
+            st.subheader("🔍 Variable Type Analysis")
+            
+            analysis_cols = st.columns(3)
+            
+            with analysis_cols[0]:
+                st.markdown("**Dependent Variable**")
+                dv_info = detect_variable_type(df[dependent_var])
+                if dv_info['scale_type'] == 'binary':
+                    st.info(f"📊 Binary ({dv_info['categories']})")
+                elif dv_info['scale_type'].startswith('likert'):
+                    scale_parts = dv_info['scale_type'].split('_')
+                    st.info(f"📊 Likert {scale_parts[1]}-{scale_parts[2]}")
+                elif dv_info['scale_type'] == 'categorical':
+                    st.info(f"📊 Categorical ({dv_info['unique_count']} categories)")
+                else:
+                    st.info(f"📊 Continuous ({dv_info['min_val']:.2f} to {dv_info['max_val']:.2f})")
+            
+            with analysis_cols[1]:
+                st.markdown("**Independent Variables**")
+                for iv in independent_vars:
+                    iv_info = detect_variable_type(df[iv])
+                    if iv_info['scale_type'] == 'binary':
+                        st.success(f"{iv}: Binary")
+                    elif iv_info['scale_type'].startswith('likert'):
+                        scale_parts = iv_info['scale_type'].split('_')
+                        st.success(f"{iv}: Likert {scale_parts[1]}-{scale_parts[2]}")
+                    else:
+                        st.success(f"{iv}: {iv_info['scale_type'].title()}")
+            
+            with analysis_cols[2]:
+                st.markdown("**Control Variables**")
+                for cv in control_vars:
+                    cv_info = detect_variable_type(df[cv])
+                    if cv_info['scale_type'] == 'binary':
+                        st.warning(f"{cv}: Binary")
+                    elif cv_info['scale_type'].startswith('likert'):
+                        scale_parts = cv_info['scale_type'].split('_')
+                        st.warning(f"{cv}: Likert {scale_parts[1]}-{scale_parts[2]}")
+                    else:
+                        st.warning(f"{cv}: {cv_info['scale_type'].title()}")
+            
             st.subheader("📊 Preliminary Analysis")
             
             selected_vars = [dependent_var] + independent_vars + control_vars
@@ -681,14 +877,44 @@ def main():
         # Display analysis results
         if 'analysis_result' in st.session_state:
             st.subheader("🔍 AI Analysis Results")
-            st.markdown(st.session_state.analysis_result)
             
-            # Display extracted suggestions as tags
+            # Create expandable sections for better readability
+            with st.expander("📊 Full Analysis Report", expanded=True):
+                st.markdown(st.session_state.analysis_result)
+            
+            # Extract and display key insights in a more digestible format
+            analysis_text = st.session_state.analysis_result
+            
+            # Try to extract key findings
+            if "KEY FINDINGS" in analysis_text or "ACTIONABLE RECOMMENDATIONS" in analysis_text:
+                st.subheader("⭐ Key Takeaways")
+                
+                # Extract key sections
+                lines = analysis_text.split('\n')
+                key_section = False
+                recommendations = []
+                
+                for line in lines:
+                    if "ACTIONABLE RECOMMENDATIONS" in line.upper():
+                        key_section = True
+                        continue
+                    elif line.startswith('#') and key_section:
+                        break
+                    elif key_section and line.strip():
+                        recommendations.append(line.strip())
+                
+                if recommendations:
+                    st.success("🎯 **What to do next:**")
+                    for rec in recommendations[:3]:  # Show top 3 recommendations
+                        if rec and not rec.startswith('#'):
+                            st.write(f"• {rec}")
+            
+            # Display extracted suggestions as tags  
             if 'suggested_variables' in st.session_state and st.session_state.suggested_variables:
-                st.subheader("💡 Extracted Variable Suggestions")
-                cols = st.columns(4)
+                st.subheader("💡 Suggested Variables for Future Research")
+                cols = st.columns(min(4, len(st.session_state.suggested_variables)))
                 for i, var in enumerate(st.session_state.suggested_variables):
-                    with cols[i % 4]:
+                    with cols[i % len(cols)]:
                         st.info(f"🏷️ {var}")
     
     with tab5:
@@ -713,8 +939,10 @@ def main():
         st.subheader("➕ Include Additional Variables")
         
         additional_vars = []
-        if 'suggested_variables' in st.session_state:
-            st.markdown("**AI-Suggested Variables:**")
+        
+        # Show AI suggested variables if available
+        if 'suggested_variables' in st.session_state and st.session_state.suggested_variables:
+            st.markdown("**🤖 AI-Suggested Variables (from your analysis):**")
             suggested = st.session_state.suggested_variables
             
             # Create checkboxes for suggested variables
@@ -727,6 +955,8 @@ def main():
                             selected_suggestions.append(var)
             
             additional_vars = selected_suggestions
+        else:
+            st.info("💡 Complete the AI Analysis first to see variable suggestions here!")
         
         # Custom additional variables
         st.markdown("**Custom Additional Variables:**")
