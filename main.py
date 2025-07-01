@@ -567,6 +567,35 @@ def generate_synthetic_variable(var_info: Dict, n_samples: int, original_series:
     
     return variables[:8]  # Limit to 8 suggestions
 
+def extract_suggested_variables(analysis_text: str) -> List[str]:
+    """Extract suggested variables from AI analysis"""
+    variables = []
+    
+    # Look for suggested variables section
+    lines = analysis_text.split('\n')
+    in_variables_section = False
+    
+    for line in lines:
+        # Updated patterns to match new format
+        if any(keyword in line.upper() for keyword in ['RECOMMENDED ADDITIONAL', 'SUGGESTED ADDITIONAL', 'ADDITIONAL VARIABLES']):
+            in_variables_section = True
+            continue
+        elif line.startswith('#') and in_variables_section:
+            break
+        elif in_variables_section and line.strip():
+            # Extract variable names from bullet points or dashes
+            if line.strip().startswith(('-', '*', '•')):
+                # Look for pattern "Variable Name:" or just the first word
+                var_match = re.search(r'[-*•]\s*([^:]+)', line)
+                if var_match:
+                    var_name = var_match.group(1).strip()
+                    # Clean up variable names
+                    var_name = re.sub(r'\(.*?\)', '', var_name).strip()  # Remove parentheses content
+                    if len(var_name) < 50 and len(var_name) > 2:  # Reasonable variable name length
+                        variables.append(var_name)
+    
+    return variables[:8]  # Limit to 8 suggestions
+
 def fuzzy_match_variables(pdf_var: str, data_col: str) -> bool:
     """Enhanced fuzzy matching for variable names"""
     pdf_lower = pdf_var.lower()
