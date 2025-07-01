@@ -216,15 +216,14 @@ def main():
     st.title("🔬 Silicon Sampling Simulation Tool")
     st.markdown("### Virtual Replication and Extension of Experiments")
     
-    # Sidebar for API configuration
-    st.sidebar.header("🔧 Configuration")
-    api_key = st.sidebar.text_input("DeepSeek API Key", type="password", 
-                                   help="Enter your DeepSeek API key for cognitive analysis")
-    
-    if not api_key:
-        st.sidebar.warning("Please enter your DeepSeek API key to proceed")
-        st.info("👈 Please enter your DeepSeek API key in the sidebar to begin")
-        return
+    # Get API key from Streamlit secrets
+    try:
+        api_key = st.secrets["DeepSeek_API_KEY01"]
+        st.sidebar.success("✅ API Key loaded from secrets")
+    except Exception as e:
+        st.sidebar.error("❌ API Key not found in secrets")
+        st.error("Please configure the DeepSeek API key in Streamlit secrets as 'DeepSeek_API_KEY01'")
+        st.stop()
     
     # Initialize API client
     deepseek_client = DeepSeekAPI(api_key)
@@ -261,7 +260,7 @@ def main():
                 st.subheader("Variable Types")
                 type_df = pd.DataFrame({
                     'Variable': df.columns,
-                    'Data Type': df.dtypes,
+                    'Data Type': df.dtypes.astype(str),  # Convert to string to avoid Arrow issues
                     'Non-Null Count': df.count(),
                     'Null Count': df.isnull().sum()
                 })
@@ -280,18 +279,22 @@ def main():
         st.subheader("📝 Variable Descriptions")
         st.markdown("Provide brief descriptions for your variables to help the AI understand the context:")
         
+        # Initialize variable descriptions in session state if not present
+        if 'var_descriptions' not in st.session_state:
+            st.session_state.var_descriptions = {}
+        
         variable_descriptions = {}
         
         for col in df.columns:
             description = st.text_input(
                 f"Description for '{col}':",
+                value=st.session_state.var_descriptions.get(col, ""),
                 key=f"desc_{col}",
                 placeholder=f"Brief description of {col}..."
             )
             if description:
                 variable_descriptions[col] = description
-        
-        st.session_state.variable_descriptions = variable_descriptions
+                st.session_state.var_descriptions[col] = description
         
         # Variable selection
         st.subheader("🎯 Variable Selection")
@@ -303,7 +306,7 @@ def main():
             dependent_var = st.selectbox(
                 "Select the outcome variable:",
                 options=df.columns,
-                key="dependent_var"
+                key="dependent_var_select"
             )
         
         with col2:
@@ -311,7 +314,7 @@ def main():
             independent_vars = st.multiselect(
                 "Select predictor variables:",
                 options=[col for col in df.columns if col != dependent_var],
-                key="independent_vars"
+                key="independent_vars_select"
             )
         
         with col3:
@@ -319,16 +322,13 @@ def main():
             control_vars = st.multiselect(
                 "Select control variables:",
                 options=[col for col in df.columns if col != dependent_var and col not in independent_vars],
-                key="control_vars"
+                key="control_vars_select"
             )
         
-        # Store selections
-        if dependent_var:
-            st.session_state.dependent_var = dependent_var
-        if independent_vars:
-            st.session_state.independent_vars = independent_vars
-        if control_vars:
-            st.session_state.control_vars = control_vars
+        # Store selections in session state with different keys
+        st.session_state.selected_dependent_var = dependent_var
+        st.session_state.selected_independent_vars = independent_vars
+        st.session_state.selected_control_vars = control_vars
         
         # Show correlation analysis
         if dependent_var and independent_vars:
@@ -350,16 +350,19 @@ def main():
         st.header("🧠 AI-Powered Analysis")
         
         # Check if all required data is available
-        required_keys = ['df', 'dependent_var', 'independent_vars', 'variable_descriptions']
-        if not all(key in st.session_state for key in required_keys):
-            st.warning("Please complete the previous steps first")
+        if 'df' not in st.session_state:
+            st.warning("Please upload data first")
+            return
+        
+        if 'selected_dependent_var' not in st.session_state:
+            st.warning("Please select variables first")
             return
         
         df = st.session_state.df
-        dependent_var = st.session_state.dependent_var
-        independent_vars = st.session_state.independent_vars
-        control_vars = st.session_state.get('control_vars', [])
-        variable_descriptions = st.session_state.variable_descriptions
+        dependent_var = st.session_state.selected_dependent_var
+        independent_vars = st.session_state.get('selected_independent_vars', [])
+        control_vars = st.session_state.get('selected_control_vars', [])
+        variable_descriptions = st.session_state.get('var_descriptions', {})
         
         if st.button("🚀 Analyze Relationships", type="primary"):
             with st.spinner("Analyzing data with DeepSeek AI..."):
@@ -392,9 +395,9 @@ def main():
             if st.button("🎲 Generate Synthetic Data"):
                 with st.spinner("Generating synthetic data..."):
                     df = st.session_state.df
-                    dependent_var = st.session_state.dependent_var
-                    independent_vars = st.session_state.independent_vars
-                    control_vars = st.session_state.get('control_vars', [])
+                    dependent_var = st.session_state.selected_dependent_var
+                    independent_vars = st.session_state.get('selected_independent_vars', [])
+                    control_vars = st.session_state.get('selected_control_vars', [])
                     
                     synthetic_code = deepseek_client.generate_synthetic_data(
                         df, dependent_var, independent_vars, control_vars, n_samples
