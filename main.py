@@ -1,44 +1,4 @@
-st.header("🔮 Silicon Sampling & Simulation")
-        
-        if 'analysis_result' not in st.session_state:
-            st.warning("Please complete the AI analysis first")
-            return
-        
-        # Configuration section
-        st.subheader("⚙️ Simulation Configuration")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            n_samples = st.number_input("Number of synthetic samples:", min_value=10, max_value=5000, value=200)
-            
-        with col2:
-            file_format = st.selectbox("Export format:", ["csv", "json"], index=0)
-        
-        # Additional variables section
-        st.subheader("➕ Include Additional Variables")
-        
-        additional_vars = []
-        if 'suggested_variables' in st.session_state:
-            st.markdown("**AI-Suggested Variables:**")
-            suggested = st.session_state.suggested_variables
-            
-            # Create checkboxes for suggested variables
-            selected_suggestions = []
-            if suggested:
-                cols = st.columns(min(3, len(suggested)))
-                for i, var in enumerate(suggested):
-                    with cols[i % len(cols)]:
-                        if st.checkbox(f"Include {var}", key=f"suggest_{i}"):
-                            selected_suggestions.append(var)
-            
-            additional_vars = selected_suggestions
-        
-        # Custom additional variables
-        st.markdown("**Custom Additional Variables:**")
-        custom_vars_input = st.text_input(
-            "Enter custom variable names (comma-separated):",
-            import streamlit as st
+import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -432,6 +392,8 @@ def create_download_button(data: pd.DataFrame, filename: str, file_format: str =
             file_name=f"{filename}.json",
             mime="application/json"
         )
+
+def load_and_preview_data(uploaded_file) -> pd.DataFrame:
     """Load and preview uploaded Excel file"""
     try:
         # Read Excel file
@@ -441,7 +403,7 @@ def create_download_button(data: pd.DataFrame, filename: str, file_format: str =
         st.error(f"Error loading file: {str(e)}")
         return None
 
-def load_and_preview_data(uploaded_file) -> pd.DataFrame:
+def create_correlation_heatmap(df: pd.DataFrame, selected_vars: List[str]):
     """Create correlation heatmap for selected variables"""
     numeric_vars = [var for var in selected_vars if var in df.columns and df[var].dtype in ['int64', 'float64']]
     
@@ -718,48 +680,223 @@ def main():
                         st.info(f"🏷️ {var}")
     
     with tab5:
-        st.header("🔮 Experiment Simulation")
+        st.header("🔮 Silicon Sampling & Simulation")
         
         if 'analysis_result' not in st.session_state:
             st.warning("Please complete the AI analysis first")
             return
         
-        st.subheader("Generate Synthetic Data")
+        # Configuration section
+        st.subheader("⚙️ Simulation Configuration")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            n_samples = st.number_input("Number of synthetic samples:", min_value=10, max_value=1000, value=100)
-        
+            n_samples = st.number_input("Number of synthetic samples:", min_value=10, max_value=5000, value=200)
+            
         with col2:
-            if st.button("🎲 Generate Synthetic Data"):
-                with st.spinner("Generating synthetic data..."):
-                    df = st.session_state.df
-                    dependent_var = st.session_state.selected_dependent_var
-                    independent_vars = st.session_state.get('selected_independent_vars', [])
-                    control_vars = st.session_state.get('selected_control_vars', [])
-                    
-                    synthetic_code = deepseek_client.generate_synthetic_data(
-                        df, dependent_var, independent_vars, control_vars, n_samples
+            file_format = st.selectbox("Export format:", ["csv", "json"], index=0)
+        
+        # Additional variables section
+        st.subheader("➕ Include Additional Variables")
+        
+        additional_vars = []
+        if 'suggested_variables' in st.session_state:
+            st.markdown("**AI-Suggested Variables:**")
+            suggested = st.session_state.suggested_variables
+            
+            # Create checkboxes for suggested variables
+            selected_suggestions = []
+            if suggested:
+                cols = st.columns(min(3, len(suggested)))
+                for i, var in enumerate(suggested):
+                    with cols[i % len(cols)]:
+                        if st.checkbox(f"Include {var}", key=f"suggest_{i}"):
+                            selected_suggestions.append(var)
+            
+            additional_vars = selected_suggestions
+        
+        # Custom additional variables
+        st.markdown("**Custom Additional Variables:**")
+        custom_vars_input = st.text_input(
+            "Enter custom variable names (comma-separated):",
+            placeholder="e.g., customer_age, purchase_frequency, satisfaction_score"
+        )
+        
+        if custom_vars_input:
+            custom_vars = [var.strip() for var in custom_vars_input.split(',') if var.strip()]
+            additional_vars.extend(custom_vars)
+        
+        # Display selected additional variables
+        if additional_vars:
+            st.success(f"✅ Additional variables to include: {', '.join(additional_vars)}")
+        
+        # Generate synthetic data
+        st.subheader("🎲 Generate Synthetic Data")
+        
+        if st.button("🚀 Generate Silicon Sample", type="primary"):
+            with st.spinner("Generating synthetic data based on your experiment..."):
+                df = st.session_state.df
+                dependent_var = st.session_state.selected_dependent_var
+                independent_vars = st.session_state.get('selected_independent_vars', [])
+                control_vars = st.session_state.get('selected_control_vars', [])
+                
+                # Generate synthetic data
+                synthetic_df = deepseek_client.generate_synthetic_data(
+                    df, dependent_var, independent_vars, control_vars, additional_vars, n_samples
+                )
+                
+                st.session_state.synthetic_data = synthetic_df
+                st.session_state.synthetic_config = {
+                    'n_samples': n_samples,
+                    'additional_vars': additional_vars,
+                    'file_format': file_format
+                }
+        
+        # Display and download synthetic data
+        if 'synthetic_data' in st.session_state:
+            synthetic_df = st.session_state.synthetic_data
+            config = st.session_state.synthetic_config
+            
+            st.subheader("📊 Generated Synthetic Data")
+            st.success(f"✅ Successfully generated {len(synthetic_df)} synthetic samples!")
+            
+            # Show preview
+            st.markdown("**Data Preview:**")
+            st.dataframe(synthetic_df.head(10))
+            
+            # Show statistics comparison
+            st.subheader("📈 Original vs Synthetic Comparison")
+            
+            original_df = st.session_state.df
+            comparison_vars = [col for col in synthetic_df.columns if col in original_df.columns]
+            
+            if comparison_vars:
+                comp_col1, comp_col2 = st.columns(2)
+                
+                with comp_col1:
+                    st.markdown("**Original Data Statistics:**")
+                    st.dataframe(original_df[comparison_vars].describe())
+                
+                with comp_col2:
+                    st.markdown("**Synthetic Data Statistics:**")
+                    st.dataframe(synthetic_df[comparison_vars].describe())
+            
+            # Visualization comparison
+            if len(comparison_vars) >= 2:
+                st.subheader("📊 Distribution Comparison")
+                
+                # Select variables for comparison
+                comp_var1 = st.selectbox("Select first variable for comparison:", comparison_vars)
+                comp_var2 = st.selectbox("Select second variable for comparison:", 
+                                       [v for v in comparison_vars if v != comp_var1])
+                
+                if comp_var1 and comp_var2:
+                    fig = make_subplots(
+                        rows=1, cols=2,
+                        subplot_titles=["Original Data", "Synthetic Data"],
+                        horizontal_spacing=0.1
                     )
                     
-                    st.session_state.synthetic_code = synthetic_code
-        
-        # Display synthetic data generation code
-        if 'synthetic_code' in st.session_state:
-            st.subheader("📋 Generated Code")
-            st.code(st.session_state.synthetic_code, language="python")
+                    # Original data scatter
+                    fig.add_trace(
+                        go.Scatter(
+                            x=original_df[comp_var1],
+                            y=original_df[comp_var2],
+                            mode='markers',
+                            name='Original',
+                            marker=dict(color='blue', alpha=0.6)
+                        ),
+                        row=1, col=1
+                    )
+                    
+                    # Synthetic data scatter
+                    fig.add_trace(
+                        go.Scatter(
+                            x=synthetic_df[comp_var1],
+                            y=synthetic_df[comp_var2],
+                            mode='markers',
+                            name='Synthetic',
+                            marker=dict(color='red', alpha=0.6)
+                        ),
+                        row=1, col=2
+                    )
+                    
+                    fig.update_layout(
+                        title=f"Distribution Comparison: {comp_var1} vs {comp_var2}",
+                        height=400,
+                        showlegend=False
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
             
-            st.info("⚠️ Note: The generated code should be reviewed and potentially modified before execution. This is a proof-of-concept for the cognitive layer approach.")
+            # Download section
+            st.subheader("📥 Download Synthetic Data")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                create_download_button(synthetic_df, "synthetic_data", "csv")
+            
+            with col2:
+                create_download_button(synthetic_df, "synthetic_data", "json")
+            
+            with col3:
+                # Create analysis report
+                report_data = {
+                    "experiment_info": {
+                        "dependent_variable": st.session_state.selected_dependent_var,
+                        "independent_variables": st.session_state.get('selected_independent_vars', []),
+                        "control_variables": st.session_state.get('selected_control_vars', []),
+                        "additional_variables": config['additional_vars'],
+                        "original_sample_size": len(st.session_state.df),
+                        "synthetic_sample_size": config['n_samples']
+                    },
+                    "analysis_summary": st.session_state.get('analysis_result', ''),
+                    "generation_timestamp": pd.Timestamp.now().isoformat()
+                }
+                
+                report_json = json.dumps(report_data, indent=2)
+                st.download_button(
+                    label="📋 Download Analysis Report",
+                    data=report_json,
+                    file_name="silicon_sampling_report.json",
+                    mime="application/json"
+                )
         
-        # Future features placeholder
-        st.subheader("🚧 Coming Soon")
+        # Future features and methodology
+        st.subheader("🔬 Silicon Sampling Methodology")
+        with st.expander("Learn more about Silicon Sampling"):
+            st.markdown("""
+            **Silicon Sampling** is a novel approach to experimental replication and extension that leverages AI to:
+            
+            1. **Analyze Relationships**: Deep understanding of variable interactions in your original data
+            2. **Model Replication**: Generate synthetic data that preserves the statistical properties of your experiment
+            3. **Hypothesis Extension**: Explore additional variables and scenarios without collecting new data
+            4. **Risk Mitigation**: Test experimental variations before conducting expensive real-world studies
+            
+            **Key Benefits:**
+            - 🚀 **Speed**: Generate new experimental scenarios in minutes
+            - 💰 **Cost-Effective**: Reduce need for expensive data collection
+            - 🔍 **Exploration**: Test hypotheses with additional variables
+            - 📊 **Validation**: Compare synthetic vs. real data distributions
+            
+            **Use Cases:**
+            - Pilot study expansion
+            - Hypothesis testing before full experiments
+            - Training data augmentation
+            - Scenario modeling and what-if analysis
+            """)
+        
+        # Advanced features placeholder
+        st.subheader("🚧 Advanced Features (Coming Soon)")
         st.markdown("""
-        - **Automated model validation**: Compare synthetic vs. original data
-        - **Interactive parameter tuning**: Adjust model parameters in real-time
-        - **Experiment extension**: Add new variables and test hypotheses
-        - **Export capabilities**: Download results and generated code
-        - **Advanced visualizations**: 3D plots and interactive dashboards
+        - **🎯 Targeted Sampling**: Generate data for specific population segments
+        - **⚖️ Bias Detection**: Identify and correct sampling biases
+        - **🔄 Iterative Refinement**: Improve synthetic data quality through feedback loops
+        - **🧪 A/B Test Simulation**: Simulate experimental conditions and power analysis
+        - **📈 Longitudinal Modeling**: Generate time-series synthetic data
+        - **🌐 Multi-modal Integration**: Combine different data types (text, images, numerical)
         """)
 
 if __name__ == "__main__":
