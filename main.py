@@ -75,7 +75,7 @@ class DeepSeekAPI:
                     }
         
         prompt = f"""
-        As an expert data scientist, analyze the following experimental data and provide insights:
+        As an expert data scientist, provide a simple, actionable analysis of this experimental data:
 
         Data Summary:
         {json.dumps(data_summary, indent=2)}
@@ -86,34 +86,33 @@ class DeepSeekAPI:
         Additional Context:
         {context}
 
-        Please provide a structured analysis with the following sections:
+        Please provide a CLEAR, USER-FRIENDLY analysis with these sections:
 
-        ## 1. RELATIONSHIP ANALYSIS
-        Analyze the relationship between the dependent variable ({dependent_var}) and independent variables ({independent_vars}).
+        ## 🔍 KEY FINDINGS (What Your Data Shows)
+        - Summarize the main relationships in plain English
+        - Focus on practical insights for decision-making
 
-        ## 2. REGRESSION MODEL
-        Provide a clear mathematical formulation:
-        - Linear regression equation in the form: Y = β₀ + β₁X₁ + β₂X₂ + ... + ε
-        - Expected coefficient signs and magnitudes
-        - R² estimation
+        ## 📊 SIMPLE REGRESSION MODEL
+        **Equation**: {dependent_var} = [provide simple equation with actual numbers]
+        
+        **What this means**: Explain in plain language what happens when variables change
+        
+        **Strength**: Rate the model strength (Weak/Moderate/Strong) and expected R²
 
-        ## 3. CONTROL VARIABLES IMPACT
-        How control variables ({control_vars}) might influence these relationships.
+        ## ⚙️ CONTROL FACTORS
+        How {str(control_vars)} affect your results (keep it simple)
 
-        ## 4. SUGGESTED ADDITIONAL VARIABLES
-        List 5-8 specific variables that could enhance this study, with brief justifications:
-        - Variable Name: Brief Description (Rationale)
+        ## 💡 RECOMMENDED ADDITIONAL VARIABLES (for future studies)
+        List 3-5 specific variables that would improve your research:
+        - Variable Name: Why it matters for your research
 
-        ## 5. POTENTIAL LIMITATIONS
-        Identify potential confounding factors or data limitations.
+        ## ⚠️ IMPORTANT LIMITATIONS
+        What to be careful about when interpreting these results
 
-        ## 6. SYNTHETIC DATA PARAMETERS
-        Suggest realistic parameter ranges for generating synthetic data:
-        - Coefficient estimates
-        - Error term variance
-        - Variable distributions
+        ## 🎯 ACTIONABLE RECOMMENDATIONS
+        What should you do next based on these findings?
 
-        Format your response with clear markdown headers and bullet points.
+        Keep explanations simple and focus on practical value for the researcher.
         """
         
         try:
@@ -229,57 +228,70 @@ class DeepSeekAPI:
     
     def _create_synthetic_dataset(self, original_data: pd.DataFrame, params: Dict, 
                                 variables: List[str], n_samples: int) -> pd.DataFrame:
-        """Create synthetic dataset using AI-generated parameters"""
+        """Create synthetic dataset using AI-generated parameters with exact scaling"""
         
         synthetic_data = {}
         
-        # Generate independent and control variables first
+        # Generate variables while preserving exact scale ranges
         for var in variables:
             if var in original_data.columns:
                 if original_data[var].dtype in ['int64', 'float64']:
-                    mean = original_data[var].mean()
-                    std = original_data[var].std()
-                    synthetic_data[var] = np.random.normal(mean, std, n_samples)
+                    # Preserve exact min/max scaling
+                    orig_min = float(original_data[var].min())
+                    orig_max = float(original_data[var].max())
+                    orig_mean = float(original_data[var].mean())
+                    orig_std = float(original_data[var].std())
+                    
+                    # Generate data with same statistical properties
+                    synthetic_values = np.random.normal(orig_mean, orig_std, n_samples)
+                    
+                    # Clip to exact original range
+                    synthetic_values = np.clip(synthetic_values, orig_min, orig_max)
+                    
+                    synthetic_data[var] = synthetic_values
                 else:
                     # For categorical variables, sample from original distribution
-                    synthetic_data[var] = np.random.choice(original_data[var].dropna(), n_samples)
-        
-        # Generate dependent variable using coefficients if available
-        if 'coefficients' in params and variables:
-            dependent_var = None
-            for var in variables:
-                if var in original_data.columns and original_data[var].dtype in ['int64', 'float64']:
-                    if not dependent_var:  # Assume first numeric variable is dependent
-                        dependent_var = var
-                        break
-            
-            if dependent_var and dependent_var in synthetic_data:
-                # Simple linear combination
-                y = params['coefficients'].get('intercept', 0)
-                for var, coef in params['coefficients'].items():
-                    if var != 'intercept' and var in synthetic_data:
-                        y += coef * synthetic_data[var]
-                
-                # Add noise
-                noise = np.random.normal(0, params.get('error_variance', 1), n_samples)
-                synthetic_data[dependent_var] = y + noise
+                    unique_vals = original_data[var].dropna().unique()
+                    value_counts = original_data[var].value_counts(normalize=True)
+                    synthetic_data[var] = np.random.choice(
+                        unique_vals, 
+                        n_samples, 
+                        p=[value_counts.get(val, 0) for val in unique_vals]
+                    )
         
         return pd.DataFrame(synthetic_data)
     
     def _create_fallback_synthetic_data(self, original_data: pd.DataFrame, 
                                       variables: List[str], n_samples: int) -> pd.DataFrame:
-        """Fallback method to create synthetic data when AI fails"""
+        """Fallback method to create synthetic data with exact scaling preservation"""
         
         synthetic_data = {}
         
         for var in variables:
             if var in original_data.columns:
                 if original_data[var].dtype in ['int64', 'float64']:
-                    mean = original_data[var].mean()
-                    std = original_data[var].std()
-                    synthetic_data[var] = np.random.normal(mean, std, n_samples)
+                    # Preserve exact min/max scaling
+                    orig_min = float(original_data[var].min())
+                    orig_max = float(original_data[var].max())
+                    orig_mean = float(original_data[var].mean())
+                    orig_std = float(original_data[var].std())
+                    
+                    # Generate data with same statistical properties
+                    synthetic_values = np.random.normal(orig_mean, orig_std, n_samples)
+                    
+                    # Clip to exact original range
+                    synthetic_values = np.clip(synthetic_values, orig_min, orig_max)
+                    
+                    synthetic_data[var] = synthetic_values
                 else:
-                    synthetic_data[var] = np.random.choice(original_data[var].dropna(), n_samples)
+                    # For categorical variables, preserve original distribution
+                    unique_vals = original_data[var].dropna().unique()
+                    value_counts = original_data[var].value_counts(normalize=True)
+                    synthetic_data[var] = np.random.choice(
+                        unique_vals, 
+                        n_samples, 
+                        p=[value_counts.get(val, 0) for val in unique_vals]
+                    )
         
         return pd.DataFrame(synthetic_data)
 
@@ -805,7 +817,7 @@ def main():
                             y=original_df[comp_var2],
                             mode='markers',
                             name='Original',
-                            marker=dict(color='blue', alpha=0.6)
+                            marker=dict(color='blue', opacity=0.6)
                         ),
                         row=1, col=1
                     )
@@ -817,7 +829,7 @@ def main():
                             y=synthetic_df[comp_var2],
                             mode='markers',
                             name='Synthetic',
-                            marker=dict(color='red', alpha=0.6)
+                            marker=dict(color='red', opacity=0.6)
                         ),
                         row=1, col=2
                     )
