@@ -281,10 +281,10 @@ class DeepSeekAPI:
         return pd.DataFrame(synthetic_data)
 
     def analyze_pdf_document(self, pdf_content: bytes) -> Dict[str, Any]:
-        """Analyze PDF document for variable context and suggestions"""
+        """Analyze PDF document for variable context and suggestions with smart experimental design detection"""
         
         if not PDF_AVAILABLE:
-            return {"analysis": "PDF analysis not available. Please install PyPDF2.", "variable_suggestions": {}}
+            return {"analysis": "PDF analysis not available. Please install PyPDF2.", "variable_suggestions": {}, "experimental_design": {}}
         
         try:
             # Extract text from PDF
@@ -294,32 +294,59 @@ class DeepSeekAPI:
                 text += page.extract_text() + "\n"
             
             # Truncate text if too long (API limits)
-            if len(text) > 8000:
-                text = text[:8000] + "..."
+            if len(text) > 12000:
+                text = text[:12000] + "..."
             
             prompt = f"""
-            Analyze this research document/codebook/survey and provide variable descriptions that can be automatically used.
+            You are an expert in experimental design and survey methodology. Analyze this research document and extract detailed variable information with special focus on experimental conditions, randomization, and treatments.
 
             Document text:
             {text}
 
-            Please provide a JSON response with this exact structure:
+            Please provide a comprehensive JSON response with this exact structure:
+
             {{
-                "analysis": "Brief summary of the research context and methodology",
+                "analysis": "Brief summary of the research context, methodology, and experimental design",
+                "experimental_design": {{
+                    "type": "experiment/survey/observational",
+                    "treatments": ["list of experimental conditions/treatments"],
+                    "randomization": "description of randomization method",
+                    "dependent_variables": ["list of outcome variables"],
+                    "independent_variables": ["list of predictor/treatment variables"],
+                    "control_variables": ["list of control/demographic variables"]
+                }},
                 "variable_suggestions": {{
-                    "variable_name_1": "Clear, concise description of what this variable measures",
-                    "variable_name_2": "Clear, concise description of what this variable measures",
-                    ...
+                    "exact_variable_name": "Clear description of what this measures (include scale if mentioned)",
+                    "condition": "Experimental condition/treatment assignment (e.g., control=0, treatment=1)",
+                    "randomization": "Random assignment variable or grouping variable",
+                    "group": "Group assignment or condition indicator",
+                    "treatment": "Treatment condition variable",
+                    "manipulation": "Experimental manipulation variable"
+                }},
+                "scale_information": {{
+                    "variable_name": {{
+                        "type": "likert/binary/categorical/continuous",
+                        "range": "e.g., 1-7 scale",
+                        "labels": ["strongly disagree", "disagree", "neutral", "agree", "strongly agree"]
+                    }}
                 }},
                 "additional_variables": {{
-                    "suggested_var_1": "Why this variable would enhance the study",
-                    "suggested_var_2": "Why this variable would enhance the study",
-                    ...
+                    "suggested_var_1": "Why this variable would enhance the study based on the research context",
+                    "suggested_var_2": "Why this variable would enhance the study based on the research context"
                 }}
             }}
 
-            Focus on identifying specific variable names that might appear in a dataset and provide practical descriptions.
-            Keep descriptions under 100 characters each.
+            IMPORTANT INSTRUCTIONS:
+            1. Look for experimental conditions, treatments, groups, manipulations
+            2. Identify randomization procedures, assignment methods
+            3. Extract exact variable names as they appear in the document
+            4. Pay special attention to condition variables, group assignments
+            5. Look for scale information (1-5, 1-7, Likert scales, etc.)
+            6. Identify survey questions and their response scales
+            7. Find demographic variables and control measures
+            8. Extract any coding schemes (0=control, 1=treatment, etc.)
+
+            Focus on experimental design elements and be very specific about variable names and scales.
             """
             
             response = requests.post(
@@ -328,8 +355,8 @@ class DeepSeekAPI:
                 json={
                     "model": "deepseek-chat",
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.3,
-                    "max_tokens": 2000
+                    "temperature": 0.2,
+                    "max_tokens": 3500
                 }
             )
             
@@ -338,18 +365,94 @@ class DeepSeekAPI:
                 
                 # Try to extract JSON from the response
                 try:
+                    # Look for JSON in the response
                     json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
                     if json_match:
-                        return json.loads(json_match.group())
+                        parsed_result = json.loads(json_match.group())
+                        # Ensure all required keys exist
+                        default_structure = {
+                            "analysis": "Analysis completed",
+                            "experimental_design": {},
+                            "variable_suggestions": {},
+                            "scale_information": {},
+                            "additional_variables": {}
+                        }
+                        for key in default_structure:
+                            if key not in parsed_result:
+                                parsed_result[key] = default_structure[key]
+                        return parsed_result
                     else:
-                        return {"analysis": ai_response, "variable_suggestions": {}}
-                except json.JSONDecodeError:
-                    return {"analysis": ai_response, "variable_suggestions": {}}
+                        return {
+                            "analysis": ai_response, 
+                            "experimental_design": {},
+                            "variable_suggestions": {},
+                            "scale_information": {},
+                            "additional_variables": {}
+                        }
+                except json.JSONDecodeError as e:
+                    # Fallback: try to extract key information manually
+                    return self._manual_extraction_fallback(ai_response, text)
             else:
-                return {"analysis": f"Error analyzing PDF: {response.status_code}", "variable_suggestions": {}}
+                return {
+                    "analysis": f"Error analyzing PDF: {response.status_code}", 
+                    "experimental_design": {},
+                    "variable_suggestions": {},
+                    "scale_information": {},
+                    "additional_variables": {}
+                }
                 
         except Exception as e:
-            return {"analysis": f"Error processing PDF: {str(e)}", "variable_suggestions": {}}
+            return {
+                "analysis": f"Error processing PDF: {str(e)}", 
+                "experimental_design": {},
+                "variable_suggestions": {},
+                "scale_information": {},
+                "additional_variables": {}
+            }
+    
+    def _manual_extraction_fallback(self, ai_response: str, original_text: str) -> Dict[str, Any]:
+        """Fallback method to extract key information when JSON parsing fails"""
+        
+        result = {
+            "analysis": ai_response,
+            "experimental_design": {},
+            "variable_suggestions": {},
+            "scale_information": {},
+            "additional_variables": {}
+        }
+        
+        # Simple keyword-based extraction from original text
+        text_lower = original_text.lower()
+        
+        # Look for experimental design keywords
+        if any(word in text_lower for word in ['experiment', 'treatment', 'condition', 'randomiz', 'control group']):
+            result["experimental_design"]["type"] = "experiment"
+        elif any(word in text_lower for word in ['survey', 'questionnaire', 'interview']):
+            result["experimental_design"]["type"] = "survey"
+        
+        # Look for common variable patterns
+        variable_suggestions = {}
+        
+        # Common experimental variables
+        if 'condition' in text_lower:
+            variable_suggestions["condition"] = "Experimental condition or treatment assignment"
+        if 'group' in text_lower:
+            variable_suggestions["group"] = "Group assignment variable"
+        if 'treatment' in text_lower:
+            variable_suggestions["treatment"] = "Treatment condition indicator"
+        if any(word in text_lower for word in ['randomiz', 'random assign']):
+            variable_suggestions["randomization"] = "Random assignment indicator"
+        
+        # Look for scale patterns
+        scale_patterns = re.findall(r'(\d+[-‒–—]\d+|\d+\s*point)', text_lower)
+        if scale_patterns:
+            result["scale_information"]["detected_scales"] = {
+                "patterns": scale_patterns,
+                "description": "Detected scale patterns in document"
+            }
+        
+        result["variable_suggestions"] = variable_suggestions
+        return result
 
 def detect_variable_type(series: pd.Series) -> Dict[str, Any]:
     """Detect variable type and characteristics for exact replication"""
@@ -646,29 +749,76 @@ def main():
                         pdf_analysis_result = deepseek_client.analyze_pdf_document(pdf_content)
                         st.session_state.pdf_analysis = pdf_analysis_result
                 
-                # Display PDF analysis results
+                # Display PDF analysis results with enhanced experimental design detection
                 if 'pdf_analysis' in st.session_state:
                     st.subheader("📄 PDF Analysis Results")
                     
                     pdf_data = st.session_state.pdf_analysis
                     
                     if isinstance(pdf_data, dict):
+                        # Display experimental design information
+                        if 'experimental_design' in pdf_data and pdf_data['experimental_design']:
+                            st.markdown("**🧪 Experimental Design Detected:**")
+                            exp_design = pdf_data['experimental_design']
+                            
+                            design_cols = st.columns(2)
+                            with design_cols[0]:
+                                if 'type' in exp_design:
+                                    st.info(f"**Study Type**: {exp_design['type'].title()}")
+                                if 'treatments' in exp_design and exp_design['treatments']:
+                                    st.success(f"**Treatments**: {', '.join(exp_design['treatments'])}")
+                            
+                            with design_cols[1]:
+                                if 'randomization' in exp_design and exp_design['randomization']:
+                                    st.warning(f"**Randomization**: {exp_design['randomization']}")
+                                if 'dependent_variables' in exp_design and exp_design['dependent_variables']:
+                                    st.info(f"**Outcome Variables**: {', '.join(exp_design['dependent_variables'])}")
+                        
                         # Display analysis summary
                         if 'analysis' in pdf_data:
-                            st.markdown("**📋 Study Context:**")
-                            st.write(pdf_data['analysis'])
+                            with st.expander("📋 Full Study Context", expanded=False):
+                                st.write(pdf_data['analysis'])
                         
-                        # Show variable suggestions that will be auto-populated
+                        # Show variable suggestions with scale information
                         if 'variable_suggestions' in pdf_data and pdf_data['variable_suggestions']:
-                            st.markdown("**🏷️ Variable Descriptions Found (will auto-populate in Variable Selection):**")
+                            st.markdown("**🏷️ Variables Detected (will auto-populate):**")
+                            
+                            # Group variables by type for better display
+                            experimental_vars = {}
+                            other_vars = {}
+                            
                             for var, desc in pdf_data['variable_suggestions'].items():
-                                st.info(f"**{var}**: {desc}")
+                                if any(keyword in var.lower() for keyword in ['condition', 'treatment', 'group', 'randomiz', 'manipulation']):
+                                    experimental_vars[var] = desc
+                                else:
+                                    other_vars[var] = desc
+                            
+                            if experimental_vars:
+                                st.markdown("*Experimental Variables:*")
+                                for var, desc in experimental_vars.items():
+                                    st.success(f"🧪 **{var}**: {desc}")
+                            
+                            if other_vars:
+                                st.markdown("*Other Variables:*")
+                                for var, desc in other_vars.items():
+                                    st.info(f"📊 **{var}**: {desc}")
+                        
+                        # Show scale information if detected
+                        if 'scale_information' in pdf_data and pdf_data['scale_information']:
+                            st.markdown("**📏 Scale Information Detected:**")
+                            scales = pdf_data['scale_information']
+                            for var, scale_info in scales.items():
+                                if isinstance(scale_info, dict):
+                                    scale_text = f"Type: {scale_info.get('type', 'unknown')}"
+                                    if 'range' in scale_info:
+                                        scale_text += f", Range: {scale_info['range']}"
+                                    st.caption(f"• {var}: {scale_text}")
                         
                         # Show additional variable suggestions
                         if 'additional_variables' in pdf_data and pdf_data['additional_variables']:
-                            st.markdown("**💡 Additional Variables Suggested:**")
-                            for var, reason in pdf_data['additional_variables'].items():
-                                st.success(f"**{var}**: {reason}")
+                            with st.expander("💡 Additional Variables Suggested", expanded=False):
+                                for var, reason in pdf_data['additional_variables'].items():
+                                    st.write(f"**{var}**: {reason}")
                     else:
                         st.markdown(pdf_data)
         else:
@@ -692,65 +842,207 @@ def main():
         if 'var_descriptions' not in st.session_state:
             st.session_state.var_descriptions = {}
         
-        # Get PDF suggestions if available
+        # Get PDF suggestions if available with improved matching
         pdf_suggestions = {}
-        if 'pdf_analysis' in st.session_state and isinstance(st.session_state.pdf_analysis, dict):
-            pdf_suggestions = st.session_state.pdf_analysis.get('variable_suggestions', {})
+        experimental_info = {}
+        scale_info = {}
         
-        # Auto-populate from PDF analysis if available
+        if 'pdf_analysis' in st.session_state and isinstance(st.session_state.pdf_analysis, dict):
+            pdf_data = st.session_state.pdf_analysis
+            pdf_suggestions = pdf_data.get('variable_suggestions', {})
+            experimental_info = pdf_data.get('experimental_design', {})
+            scale_info = pdf_data.get('scale_information', {})
+        
+        # Enhanced auto-populate from PDF analysis
         if pdf_suggestions:
             st.success(f"✅ Found {len(pdf_suggestions)} variable descriptions from your PDF analysis!")
-            if st.button("🔄 Auto-populate from PDF"):
-                for var_name, description in pdf_suggestions.items():
-                    # Find matching variables (case-insensitive, partial matching)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🔄 Auto-populate ALL from PDF", type="primary"):
+                    matched_count = 0
+                    for var_name, description in pdf_suggestions.items():
+                        # Enhanced matching logic
+                        for col in df.columns:
+                            # Exact match (case insensitive)
+                            if var_name.lower() == col.lower():
+                                st.session_state.var_descriptions[col] = description
+                                matched_count += 1
+                                break
+                            # Partial match (either direction)
+                            elif (var_name.lower() in col.lower() or 
+                                  col.lower() in var_name.lower()):
+                                st.session_state.var_descriptions[col] = description
+                                matched_count += 1
+                                break
+                            # Fuzzy matching for common variations
+                            elif self._fuzzy_match_variables(var_name, col):
+                                st.session_state.var_descriptions[col] = description
+                                matched_count += 1
+                                break
+                    
+                    st.success(f"✅ Matched {matched_count} variables!")
+                    st.rerun()
+            
+            with col2:
+                if st.button("🎯 Smart Match Experimental Variables"):
+                    # Focus on experimental design variables
+                    experimental_matches = 0
+                    experimental_keywords = ['condition', 'treatment', 'group', 'randomiz', 'manipulation', 'assign']
+                    
                     for col in df.columns:
-                        if (var_name.lower() in col.lower() or 
-                            col.lower() in var_name.lower() or 
-                            var_name.lower() == col.lower()):
-                            st.session_state.var_descriptions[col] = description
-                st.rerun()
+                        col_lower = col.lower()
+                        # Check if column might be experimental
+                        for keyword in experimental_keywords:
+                            if keyword in col_lower:
+                                # Find best matching PDF variable
+                                best_match = self._find_best_experimental_match(col, pdf_suggestions, experimental_keywords)
+                                if best_match:
+                                    st.session_state.var_descriptions[col] = pdf_suggestions[best_match]
+                                    experimental_matches += 1
+                                    break
+                    
+                    if experimental_matches > 0:
+                        st.success(f"🧪 Matched {experimental_matches} experimental variables!")
+                        st.rerun()
+                    else:
+                        st.warning("No experimental variables detected in your data columns")
         
         variable_descriptions = {}
         
         for col in df.columns:
+            # Enhanced variable description with PDF integration
             # Auto-detect variable characteristics
             var_info = detect_variable_type(df[col])
             
-            # Create helpful placeholder based on variable type
+            # Get scale information from PDF if available
+            pdf_scale_info = ""
+            if col in scale_info or any(col.lower() in k.lower() for k in scale_info.keys()):
+                for scale_var, scale_data in scale_info.items():
+                    if col.lower() in scale_var.lower() or scale_var.lower() in col.lower():
+                        if isinstance(scale_data, dict):
+                            pdf_scale_info = f" (PDF detected: {scale_data.get('type', '')}"
+                            if 'range' in scale_data:
+                                pdf_scale_info += f", {scale_data['range']}"
+                            pdf_scale_info += ")"
+            
+            # Create comprehensive placeholder
             if var_info['scale_type'] == 'binary':
-                placeholder = f"Binary variable (0/1 or {var_info['categories']})"
+                placeholder = f"Binary variable (0/1 or {var_info['categories']}){pdf_scale_info}"
             elif var_info['scale_type'].startswith('likert'):
                 scale_range = var_info['scale_type'].split('_')[1:3]
-                placeholder = f"Likert scale {scale_range[0]}-{scale_range[1]} (e.g., strongly disagree to strongly agree)"
+                placeholder = f"{scale_range[0]}-{scale_range[1]} Likert scale{pdf_scale_info}"
             elif var_info['scale_type'] == 'categorical':
-                placeholder = f"Categorical variable ({var_info['unique_count']} categories)"
+                placeholder = f"Categorical variable ({var_info['unique_count']} categories){pdf_scale_info}"
             else:
-                placeholder = f"Numeric variable (range: {var_info['min_val']:.2f} to {var_info['max_val']:.2f})"
+                placeholder = f"Numeric (range: {var_info['min_val']:.2f}-{var_info['max_val']:.2f}){pdf_scale_info}"
             
-            # Try to find matching PDF suggestion
-            pdf_suggestion = ""
+            # Enhanced PDF suggestion matching
             current_value = st.session_state.var_descriptions.get(col, "")
             
             if not current_value and pdf_suggestions:
+                # Try multiple matching strategies
+                matches = []
+                
+                # Exact match
+                if col in pdf_suggestions:
+                    matches.append((col, pdf_suggestions[col]))
+                
+                # Case-insensitive exact match
                 for pdf_var, pdf_desc in pdf_suggestions.items():
-                    if (pdf_var.lower() in col.lower() or 
-                        col.lower() in pdf_var.lower() or 
-                        pdf_var.lower() == col.lower()):
-                        current_value = pdf_desc
-                        st.session_state.var_descriptions[col] = pdf_desc
+                    if pdf_var.lower() == col.lower():
+                        matches.append((pdf_var, pdf_desc))
                         break
+                
+                # Partial matching
+                if not matches:
+                    for pdf_var, pdf_desc in pdf_suggestions.items():
+                        if (pdf_var.lower() in col.lower() or 
+                            col.lower() in pdf_var.lower()):
+                            matches.append((pdf_var, pdf_desc))
+                
+                # Experimental variable matching
+                if not matches:
+                    experimental_keywords = ['condition', 'treatment', 'group', 'randomiz', 'manipulation']
+                    col_lower = col.lower()
+                    if any(keyword in col_lower for keyword in experimental_keywords):
+                        for pdf_var, pdf_desc in pdf_suggestions.items():
+                            if any(keyword in pdf_var.lower() for keyword in experimental_keywords):
+                                matches.append((pdf_var, pdf_desc))
+                                break
+                
+                # Use the best match
+                if matches:
+                    current_value = matches[0][1]
+                    st.session_state.var_descriptions[col] = current_value
             
             description = st.text_input(
                 f"Description for '{col}' ({var_info['scale_type']}):",
                 value=current_value,
                 key=f"desc_{col}",
                 placeholder=placeholder,
-                help=f"Detected as {var_info['scale_type']} variable. {placeholder}"
+                help=f"Auto-detected: {var_info['scale_type']} variable. {placeholder}"
             )
             
             if description:
                 variable_descriptions[col] = description
                 st.session_state.var_descriptions[col] = description
+
+    def _fuzzy_match_variables(self, pdf_var: str, data_col: str) -> bool:
+        """Enhanced fuzzy matching for variable names"""
+        pdf_lower = pdf_var.lower()
+        col_lower = data_col.lower()
+        
+        # Common experimental variable synonyms
+        experimental_synonyms = {
+            'condition': ['cond', 'treatment', 'group', 'condition_assignment'],
+            'treatment': ['treat', 'condition', 'intervention', 'manipulation'],
+            'group': ['grp', 'condition', 'assignment', 'cohort'],
+            'randomization': ['random', 'rand', 'assignment', 'assign'],
+            'manipulation': ['manip', 'treatment', 'condition']
+        }
+        
+        # Check if either variable contains experimental synonyms
+        for key, synonyms in experimental_synonyms.items():
+            if key in pdf_lower:
+                if any(syn in col_lower for syn in synonyms):
+                    return True
+            if key in col_lower:
+                if any(syn in pdf_lower for syn in synonyms):
+                    return True
+        
+        # Common abbreviations and variations
+        common_variations = {
+            'wtp': 'willingness_to_pay',
+            'brandtrust': 'brand_trust',
+            'cust': 'customer',
+            'satisf': 'satisfaction',
+            'demo': 'demographic'
+        }
+        
+        for abbrev, full in common_variations.items():
+            if (abbrev in pdf_lower and full in col_lower) or (abbrev in col_lower and full in pdf_lower):
+                return True
+        
+        return False
+    
+    def _find_best_experimental_match(self, data_col: str, pdf_suggestions: Dict, experimental_keywords: List[str]) -> str:
+        """Find the best matching experimental variable from PDF suggestions"""
+        col_lower = data_col.lower()
+        
+        # Direct keyword matching
+        for pdf_var in pdf_suggestions.keys():
+            pdf_lower = pdf_var.lower()
+            for keyword in experimental_keywords:
+                if keyword in col_lower and keyword in pdf_lower:
+                    return pdf_var
+        
+        # Fuzzy matching for experimental variables
+        for pdf_var in pdf_suggestions.keys():
+            if self._fuzzy_match_variables(pdf_var, data_col):
+                return pdf_var
+        
+        return None
         
         # Variable selection
         st.subheader("🎯 Variable Selection")
