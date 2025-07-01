@@ -329,10 +329,6 @@ class DeepSeekAPI:
                         "range": "e.g., 1-7 scale",
                         "labels": ["strongly disagree", "disagree", "neutral", "agree", "strongly agree"]
                     }}
-                }},
-                "additional_variables": {{
-                    "suggested_var_1": "Why this variable would enhance the study based on the research context",
-                    "suggested_var_2": "Why this variable would enhance the study based on the research context"
                 }}
             }}
 
@@ -347,6 +343,7 @@ class DeepSeekAPI:
             8. Extract any coding schemes (0=control, 1=treatment, etc.)
 
             Focus on experimental design elements and be very specific about variable names and scales.
+            Do not include additional_variables section.
             """
             
             response = requests.post(
@@ -374,8 +371,7 @@ class DeepSeekAPI:
                             "analysis": "Analysis completed",
                             "experimental_design": {},
                             "variable_suggestions": {},
-                            "scale_information": {},
-                            "additional_variables": {}
+                            "scale_information": {}
                         }
                         for key in default_structure:
                             if key not in parsed_result:
@@ -386,8 +382,7 @@ class DeepSeekAPI:
                             "analysis": ai_response, 
                             "experimental_design": {},
                             "variable_suggestions": {},
-                            "scale_information": {},
-                            "additional_variables": {}
+                            "scale_information": {}
                         }
                 except json.JSONDecodeError as e:
                     # Fallback: try to extract key information manually
@@ -397,8 +392,7 @@ class DeepSeekAPI:
                     "analysis": f"Error analyzing PDF: {response.status_code}", 
                     "experimental_design": {},
                     "variable_suggestions": {},
-                    "scale_information": {},
-                    "additional_variables": {}
+                    "scale_information": {}
                 }
                 
         except Exception as e:
@@ -406,8 +400,7 @@ class DeepSeekAPI:
                 "analysis": f"Error processing PDF: {str(e)}", 
                 "experimental_design": {},
                 "variable_suggestions": {},
-                "scale_information": {},
-                "additional_variables": {}
+                "scale_information": {}
             }
     
     def _manual_extraction_fallback(self, ai_response: str, original_text: str) -> Dict[str, Any]:
@@ -417,8 +410,7 @@ class DeepSeekAPI:
             "analysis": ai_response,
             "experimental_design": {},
             "variable_suggestions": {},
-            "scale_information": {},
-            "additional_variables": {}
+            "scale_information": {}
         }
         
         # Simple keyword-based extraction from original text
@@ -575,7 +567,61 @@ def generate_synthetic_variable(var_info: Dict, n_samples: int, original_series:
     
     return variables[:8]  # Limit to 8 suggestions
 
-def extract_suggested_variables(analysis_text: str) -> List[str]:
+def fuzzy_match_variables(pdf_var: str, data_col: str) -> bool:
+    """Enhanced fuzzy matching for variable names"""
+    pdf_lower = pdf_var.lower()
+    col_lower = data_col.lower()
+    
+    # Common experimental variable synonyms
+    experimental_synonyms = {
+        'condition': ['cond', 'treatment', 'group', 'condition_assignment'],
+        'treatment': ['treat', 'condition', 'intervention', 'manipulation'],
+        'group': ['grp', 'condition', 'assignment', 'cohort'],
+        'randomization': ['random', 'rand', 'assignment', 'assign'],
+        'manipulation': ['manip', 'treatment', 'condition']
+    }
+    
+    # Check if either variable contains experimental synonyms
+    for key, synonyms in experimental_synonyms.items():
+        if key in pdf_lower:
+            if any(syn in col_lower for syn in synonyms):
+                return True
+        if key in col_lower:
+            if any(syn in pdf_lower for syn in synonyms):
+                return True
+    
+    # Common abbreviations and variations
+    common_variations = {
+        'wtp': 'willingness_to_pay',
+        'brandtrust': 'brand_trust',
+        'cust': 'customer',
+        'satisf': 'satisfaction',
+        'demo': 'demographic'
+    }
+    
+    for abbrev, full in common_variations.items():
+        if (abbrev in pdf_lower and full in col_lower) or (abbrev in col_lower and full in pdf_lower):
+            return True
+    
+    return False
+
+def find_best_experimental_match(data_col: str, pdf_suggestions: Dict, experimental_keywords: List[str]) -> str:
+    """Find the best matching experimental variable from PDF suggestions"""
+    col_lower = data_col.lower()
+    
+    # Direct keyword matching
+    for pdf_var in pdf_suggestions.keys():
+        pdf_lower = pdf_var.lower()
+        for keyword in experimental_keywords:
+            if keyword in col_lower and keyword in pdf_lower:
+                return pdf_var
+    
+    # Fuzzy matching for experimental variables
+    for pdf_var in pdf_suggestions.keys():
+        if fuzzy_match_variables(pdf_var, data_col):
+            return pdf_var
+    
+    return None
     """Create download button for synthetic data"""
     
     if file_format == 'csv':
@@ -813,12 +859,6 @@ def main():
                                     if 'range' in scale_info:
                                         scale_text += f", Range: {scale_info['range']}"
                                     st.caption(f"• {var}: {scale_text}")
-                        
-                        # Show additional variable suggestions
-                        if 'additional_variables' in pdf_data and pdf_data['additional_variables']:
-                            with st.expander("💡 Additional Variables Suggested", expanded=False):
-                                for var, reason in pdf_data['additional_variables'].items():
-                                    st.write(f"**{var}**: {reason}")
                     else:
                         st.markdown(pdf_data)
         else:
@@ -876,7 +916,7 @@ def main():
                                 matched_count += 1
                                 break
                             # Fuzzy matching for common variations
-                            elif self._fuzzy_match_variables(var_name, col):
+                            elif fuzzy_match_variables(var_name, col):
                                 st.session_state.var_descriptions[col] = description
                                 matched_count += 1
                                 break
@@ -896,7 +936,7 @@ def main():
                         for keyword in experimental_keywords:
                             if keyword in col_lower:
                                 # Find best matching PDF variable
-                                best_match = self._find_best_experimental_match(col, pdf_suggestions, experimental_keywords)
+                                best_match = find_best_experimental_match(col, pdf_suggestions, experimental_keywords)
                                 if best_match:
                                     st.session_state.var_descriptions[col] = pdf_suggestions[best_match]
                                     experimental_matches += 1
@@ -961,7 +1001,7 @@ def main():
                             col.lower() in pdf_var.lower()):
                             matches.append((pdf_var, pdf_desc))
                 
-                # Experimental variable matching
+                # Fuzzy matching for experimental variables
                 if not matches:
                     experimental_keywords = ['condition', 'treatment', 'group', 'randomiz', 'manipulation']
                     col_lower = col.lower()
@@ -987,62 +1027,6 @@ def main():
             if description:
                 variable_descriptions[col] = description
                 st.session_state.var_descriptions[col] = description
-
-    def _fuzzy_match_variables(self, pdf_var: str, data_col: str) -> bool:
-        """Enhanced fuzzy matching for variable names"""
-        pdf_lower = pdf_var.lower()
-        col_lower = data_col.lower()
-        
-        # Common experimental variable synonyms
-        experimental_synonyms = {
-            'condition': ['cond', 'treatment', 'group', 'condition_assignment'],
-            'treatment': ['treat', 'condition', 'intervention', 'manipulation'],
-            'group': ['grp', 'condition', 'assignment', 'cohort'],
-            'randomization': ['random', 'rand', 'assignment', 'assign'],
-            'manipulation': ['manip', 'treatment', 'condition']
-        }
-        
-        # Check if either variable contains experimental synonyms
-        for key, synonyms in experimental_synonyms.items():
-            if key in pdf_lower:
-                if any(syn in col_lower for syn in synonyms):
-                    return True
-            if key in col_lower:
-                if any(syn in pdf_lower for syn in synonyms):
-                    return True
-        
-        # Common abbreviations and variations
-        common_variations = {
-            'wtp': 'willingness_to_pay',
-            'brandtrust': 'brand_trust',
-            'cust': 'customer',
-            'satisf': 'satisfaction',
-            'demo': 'demographic'
-        }
-        
-        for abbrev, full in common_variations.items():
-            if (abbrev in pdf_lower and full in col_lower) or (abbrev in col_lower and full in pdf_lower):
-                return True
-        
-        return False
-    
-    def _find_best_experimental_match(self, data_col: str, pdf_suggestions: Dict, experimental_keywords: List[str]) -> str:
-        """Find the best matching experimental variable from PDF suggestions"""
-        col_lower = data_col.lower()
-        
-        # Direct keyword matching
-        for pdf_var in pdf_suggestions.keys():
-            pdf_lower = pdf_var.lower()
-            for keyword in experimental_keywords:
-                if keyword in col_lower and keyword in pdf_lower:
-                    return pdf_var
-        
-        # Fuzzy matching for experimental variables
-        for pdf_var in pdf_suggestions.keys():
-            if self._fuzzy_match_variables(pdf_var, data_col):
-                return pdf_var
-        
-        return None
         
         # Variable selection
         st.subheader("🎯 Variable Selection")
