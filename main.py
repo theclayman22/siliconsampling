@@ -561,102 +561,195 @@ def main():
             valid_questions = [q for q in st.session_state.questions if len(q.text.strip()) >= 10]
             
             if len(valid_questions) == 0:
-                st.error("❌ No valid questions found. Please check your PDF.")
-                st.stop()
-            
-            # Test run option
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🧪 Test Run (3 participants)", type="secondary"):
-                    simulator = ExperimentSimulator(api_key)
-                    
-                    with st.spinner("Running test simulation..."):
-                        test_results = simulator.simulate_responses(valid_questions, sample_chars, 3)
-                        st.session_state.test_results = test_results
-                    
-                    st.success("Test completed!")
-                    with st.expander("Test Results"):
-                        st.dataframe(test_results)
-                    
-                    usage = simulator.deepseek_api.get_usage_stats()
-                    st.info(f"API Usage: {usage['requests']} requests, {usage['total_tokens']} tokens")
-            
-            with col2:
-                if st.button("🚀 Run Full Simulation", type="primary"):
-                    simulator = ExperimentSimulator(api_key)
-                    
-                    estimated_requests = len(valid_questions) * num_participants
-                    estimated_time = estimated_requests * 2
-                    
-                    st.warning(f"""
-                    **Estimated simulation:**
-                    - Questions: {len(valid_questions)}
-                    - Participants: {num_participants}
-                    - API requests: {estimated_requests}
-                    - Time: ~{estimated_time//60}m {estimated_time%60}s
-                    """)
-                    
-                    if st.checkbox("I understand and want to proceed"):
-                        with st.spinner("Running simulation..."):
-                            start_time = time.time()
-                            results = simulator.simulate_responses(valid_questions, sample_chars, num_participants)
-                            end_time = time.time()
-                            st.session_state.results = results
+                st.error("❌ No valid questions found. Please check your questions.")
+            else:
+                st.success(f"✅ Ready to simulate with {len(valid_questions)} valid questions")
+                
+                # Show simulation options
+                st.subheader("🚀 Run Simulation")
+                
+                # Test run option
+                col_test, col_full = st.columns(2)
+                
+                with col_test:
+                    if st.button("🧪 Test Run\n(3 participants)", type="secondary", use_container_width=True):
+                        simulator = ExperimentSimulator(api_key)
                         
-                        duration = end_time - start_time
+                        with st.spinner("Running test simulation..."):
+                            test_results = simulator.simulate_responses(valid_questions, sample_chars, 3)
+                            st.session_state.test_results = test_results
+                        
+                        st.success("Test completed!")
+                        
+                        # Show test results preview
+                        with st.expander("📊 Test Results Preview"):
+                            st.dataframe(test_results, use_container_width=True)
+                        
+                        # Show API usage
                         usage = simulator.deepseek_api.get_usage_stats()
+                        st.info(f"**API Usage:** {usage['requests']} requests, {usage['total_tokens']} tokens")
+                
+                with col_full:
+                    if st.button("🚀 Full Simulation", type="primary", use_container_width=True):
+                        # Show estimation first
+                        estimated_requests = len(valid_questions) * num_participants
+                        estimated_time = estimated_requests * 2  # 2 seconds per request estimate
                         
-                        st.success(f"""
-                        ✅ Simulation completed!
-                        - Duration: {duration//60:.0f}m {duration%60:.0f}s
-                        - API Requests: {usage['requests']}
-                        - Tokens: {usage['total_tokens']}
-                        """)
+                        with st.expander("📋 Simulation Details", expanded=True):
+                            st.write(f"""
+                            **Simulation Parameters:**
+                            - Questions: {len(valid_questions)}
+                            - Participants: {num_participants}
+                            - Estimated API requests: {estimated_requests}
+                            - Estimated time: ~{estimated_time//60}m {estimated_time%60}s
+                            
+                            **Sample Characteristics:**
+                            - Age: {sample_chars.age_range}
+                            - Gender: {sample_chars.gender_distribution}
+                            - Education: {sample_chars.education_level}
+                            - SES: {sample_chars.socioeconomic_status}
+                            """)
+                        
+                        # Confirmation checkbox
+                        confirm_simulation = st.checkbox(
+                            "✅ I understand this will use my DeepSeek API quota and want to proceed",
+                            key="confirm_full_sim"
+                        )
+                        
+                        if confirm_simulation:
+                            if st.button("▶️ Start Full Simulation", type="primary"):
+                                simulator = ExperimentSimulator(api_key)
+                                
+                                with st.spinner("Running full simulation... Please wait."):
+                                    start_time = time.time()
+                                    
+                                    # Add a more detailed progress indicator
+                                    progress_container = st.container()
+                                    with progress_container:
+                                        st.info("🤖 AI participants are responding to your questionnaire...")
+                                    
+                                    results = simulator.simulate_responses(valid_questions, sample_chars, num_participants)
+                                    end_time = time.time()
+                                    st.session_state.results = results
+                                
+                                # Show completion stats
+                                duration = end_time - start_time
+                                usage = simulator.deepseek_api.get_usage_stats()
+                                
+                                st.success(f"""
+                                🎉 **Simulation Completed Successfully!**
+                                
+                                **Performance Stats:**
+                                - Duration: {duration//60:.0f}m {duration%60:.0f}s
+                                - API Requests: {usage['requests']}
+                                - Total Tokens: {usage['total_tokens']}
+                                - Participants: {num_participants}
+                                - Questions: {len(valid_questions)}
+                                """)
+                                
+                                # Auto-scroll to results
+                                st.balloons()
         
         elif uploaded_file is not None:
-            st.warning("⚠️ No questions detected in PDF. Please check the format.")
+            st.warning("⚠️ No questions detected in PDF. Please check the format or add questions manually.")
         else:
-            st.info("📤 Please upload a PDF questionnaire to begin.")
+            st.info("📤 Please upload a PDF questionnaire to begin simulation.")
         
-        # Display results
+        # Display results section
         if st.session_state.results is not None:
-            st.subheader("📊 Results")
+            st.markdown("---")
+            st.subheader("📊 Simulation Results")
             
-            # Raw data
-            with st.expander("Raw Data"):
-                st.dataframe(st.session_state.results)
+            # Results summary
+            st.success(f"✅ Simulation complete! {len(st.session_state.results)} participants responded.")
             
-            # Analysis for Likert questions
-            st.subheader("📈 Analysis")
+            # Raw data viewer
+            with st.expander("📋 Raw Data Table", expanded=False):
+                st.dataframe(st.session_state.results, use_container_width=True)
             
+            # Analysis section
+            st.subheader("📈 Response Analysis")
+            
+            # Get Likert questions for analysis
             likert_questions = [q for q in st.session_state.questions if q.type == "likert"]
             
             if likert_questions:
+                # Question selector
                 selected_question = st.selectbox(
-                    "Select Likert Question for Analysis",
-                    [q.id for q in likert_questions]
+                    "🎯 Select a Likert Scale Question for Analysis:",
+                    [f"{q.id}: {q.text[:50]}..." if len(q.text) > 50 else f"{q.id}: {q.text}" for q in likert_questions],
+                    key="analysis_question_select"
                 )
                 
-                if selected_question and selected_question in st.session_state.results.columns:
-                    question_data = st.session_state.results[selected_question]
-                    value_counts = question_data.value_counts()
+                if selected_question:
+                    # Extract question ID
+                    q_id = selected_question.split(":")[0]
                     
-                    fig = px.bar(
-                        x=value_counts.index,
-                        y=value_counts.values,
-                        title=f"Response Distribution for {selected_question}",
-                        labels={"x": "Response", "y": "Count"}
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                    if q_id in st.session_state.results.columns:
+                        question_data = st.session_state.results[q_id]
+                        value_counts = question_data.value_counts()
+                        
+                        # Create visualization
+                        col_chart, col_stats = st.columns([2, 1])
+                        
+                        with col_chart:
+                            fig = px.bar(
+                                x=value_counts.index,
+                                y=value_counts.values,
+                                title=f"Response Distribution for {q_id}",
+                                labels={"x": "Response", "y": "Count"},
+                                color=value_counts.values,
+                                color_continuous_scale="viridis"
+                            )
+                            fig.update_layout(showlegend=False)
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        with col_stats:
+                            st.metric("Total Responses", len(question_data))
+                            st.metric("Unique Responses", len(value_counts))
+                            
+                            # Most common response
+                            most_common = value_counts.index[0]
+                            most_common_count = value_counts.iloc[0]
+                            st.metric("Most Common", f"{most_common} ({most_common_count})")
             
-            # Download results
-            csv = st.session_state.results.to_csv(index=False)
-            st.download_button(
-                label="📥 Download Results as CSV",
-                data=csv,
-                file_name=f"simulation_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
+            else:
+                st.info("💡 No Likert scale questions found for detailed analysis.")
+            
+            # Export section
+            st.subheader("📥 Export Results")
+            
+            col_export1, col_export2 = st.columns(2)
+            
+            with col_export1:
+                # CSV download
+                csv_data = st.session_state.results.to_csv(index=False)
+                st.download_button(
+                    label="📊 Download as CSV",
+                    data=csv_data,
+                    file_name=f"simulation_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            
+            with col_export2:
+                # JSON download
+                json_data = st.session_state.results.to_json(orient='records', indent=2)
+                st.download_button(
+                    label="📄 Download as JSON",
+                    data=json_data,
+                    file_name=f"simulation_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json",
+                    use_container_width=True
+                )
+            
+            # Clear results option
+            if st.button("🗑️ Clear Results", type="secondary"):
+                st.session_state.results = None
+                if 'test_results' in st.session_state:
+                    del st.session_state.test_results
+                st.rerun()
+
     
     # Footer
     st.markdown("---")
