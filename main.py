@@ -557,22 +557,26 @@ def main():
     with col2:
         st.header("🎯 Simulation Results")
         
+        # Always show simulation section if we have questions
         if st.session_state.questions and len(st.session_state.questions) > 0:
             valid_questions = [q for q in st.session_state.questions if len(q.text.strip()) >= 10]
             
+            # Show simulation status
             if len(valid_questions) == 0:
                 st.error("❌ No valid questions found. Please check your questions.")
+                st.info("💡 Questions need at least 10 characters to be considered valid.")
             else:
                 st.success(f"✅ Ready to simulate with {len(valid_questions)} valid questions")
-                
-                # Show simulation options
-                st.subheader("🚀 Run Simulation")
-                
+            
+            # Always show simulation controls (even if no valid questions, for debugging)
+            st.subheader("🚀 Run Simulation")
+            
+            if len(valid_questions) > 0:
                 # Test run option
                 col_test, col_full = st.columns(2)
                 
                 with col_test:
-                    if st.button("🧪 Test Run\n(3 participants)", type="secondary", use_container_width=True):
+                    if st.button("🧪 Test Run\n(3 participants)", type="secondary", use_container_width=True, key="test_run_btn"):
                         simulator = ExperimentSimulator(api_key)
                         
                         with st.spinner("Running test simulation..."):
@@ -590,25 +594,9 @@ def main():
                         st.info(f"**API Usage:** {usage['requests']} requests, {usage['total_tokens']} tokens")
                 
                 with col_full:
-                    if st.button("🚀 Full Simulation", type="primary", use_container_width=True):
-                        # Show estimation first
-                        estimated_requests = len(valid_questions) * num_participants
-                        estimated_time = estimated_requests * 2  # 2 seconds per request estimate
-                        
-                        with st.expander("📋 Simulation Details", expanded=True):
-                            st.write(f"""
-                            **Simulation Parameters:**
-                            - Questions: {len(valid_questions)}
-                            - Participants: {num_participants}
-                            - Estimated API requests: {estimated_requests}
-                            - Estimated time: ~{estimated_time//60}m {estimated_time%60}s
-                            
-                            **Sample Characteristics:**
-                            - Age: {sample_chars.age_range}
-                            - Gender: {sample_chars.gender_distribution}
-                            - Education: {sample_chars.education_level}
-                            - SES: {sample_chars.socioeconomic_status}
-                            """)
+                    if st.button("🚀 Full Simulation", type="primary", use_container_width=True, key="full_sim_btn"):
+                        # Show estimation in a container that doesn't affect button visibility
+                        estimation_container = st.container()
                         
                         # Confirmation checkbox
                         confirm_simulation = st.checkbox(
@@ -616,8 +604,21 @@ def main():
                             key="confirm_full_sim"
                         )
                         
+                        # Show estimation details
+                        with estimation_container:
+                            estimated_requests = len(valid_questions) * num_participants
+                            estimated_time = estimated_requests * 2  # 2 seconds per request estimate
+                            
+                            st.info(f"""
+                            **📋 Simulation Details:**
+                            - Questions: {len(valid_questions)}
+                            - Participants: {num_participants}
+                            - Estimated API requests: {estimated_requests}
+                            - Estimated time: ~{estimated_time//60}m {estimated_time%60}s
+                            """)
+                        
                         if confirm_simulation:
-                            if st.button("▶️ Start Full Simulation", type="primary"):
+                            if st.button("▶️ Start Full Simulation", type="primary", key="start_full_sim"):
                                 simulator = ExperimentSimulator(api_key)
                                 
                                 with st.spinner("Running full simulation... Please wait."):
@@ -649,13 +650,18 @@ def main():
                                 
                                 # Auto-scroll to results
                                 st.balloons()
+            else:
+                st.warning("⚠️ Please ensure you have valid questions before running simulation.")
+                st.info("💡 Add questions manually using the form above if automatic detection didn't work.")
         
-        elif uploaded_file is not None:
-            st.warning("⚠️ No questions detected in PDF. Please check the format or add questions manually.")
         else:
-            st.info("📤 Please upload a PDF questionnaire to begin simulation.")
+            # No questions yet
+            if uploaded_file is not None:
+                st.warning("⚠️ No questions detected in PDF. Please check the format or add questions manually above.")
+            else:
+                st.info("📤 Please upload a PDF questionnaire to begin simulation.")
         
-        # Display results section
+        # Results section (always show if results exist)
         if st.session_state.results is not None:
             st.markdown("---")
             st.subheader("📊 Simulation Results")
