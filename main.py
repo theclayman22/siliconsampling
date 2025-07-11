@@ -139,8 +139,11 @@ class PDFProcessor:
     
     @staticmethod
     def parse_questionnaire(text: str) -> List[Question]:
-        """Parse questionnaire text and extract questions"""
+        """Parse questionnaire text and extract questions with improved detection"""
         questions = []
+        
+        # Store original text for debugging
+        original_text = text
         
         # Clean and preprocess text
         text = re.sub(r'\s+', ' ', text)  # Replace multiple spaces with single space
@@ -157,41 +160,97 @@ class PDFProcessor:
             r'1\s*=.*?7\s*=',
             r'indicate.*?level.*?agreement',
             r'rate.*?statement',
-            r'1.*never.*7.*always'
+            r'1.*never.*7.*always',
+            r'please.*rate.*each.*statement'
         ]
         
-        # Find numbered questions
-        numbered_pattern = r'(?:^|\n)(\d+)\.\s*([^.\n]*(?:\.[^.\n]*)*?)(?=\n\d+\.|$)'
-        numbered_matches = re.finditer(numbered_pattern, text, re.MULTILINE | re.DOTALL)
+        # Multiple strategies to find questions
+        all_questions = []
         
-        # Find Q-format questions  
-        q_pattern = r'(?:^|\n)(Q\d+)[:.]?\s*([^.\n]*(?:\.[^.\n]*)*?)(?=\n(?:Q\d+|$))'
-        q_matches = re.finditer(q_pattern, text, re.MULTILINE | re.DOTALL)
+        # Strategy 1: Find numbered questions (1., 2., 3., etc.)
+        numbered_patterns = [
+            r'(?:^|\n)\s*(\d+)\.\s+([^\n]+(?:\n(?!\s*\d+\.)[^\n]*)*)',
+            r'(?:^|\n)\s*(\d+)\s*\.\s*([^\d]+?)(?=\n\s*\d+\.|$)',
+            r'(\d+)\.\s*([^.]{10,}?)(?=\n|\d+\.|$)'
+        ]
         
-        # Combine all matches
-        all_matches = []
+        for pattern in numbered_patterns:
+            matches = re.finditer(pattern, text, re.MULTILINE | re.DOTALL)
+            for match in matches:
+                try:
+                    num = int(match.group(1))
+                    question_text = match.group(2).strip()
+                    if len(question_text) > 10 and not any('section' in q.lower() for q in [question_text]):
+                        all_questions.append((num, f"Q{num}", question_text, match.start(), "numbered"))
+                except:
+                    continue
         
-        for match in numbered_matches:
-            num = int(match.group(1))
-            question_text = match.group(2).strip()
-            all_matches.append((num, f"Q{num}", question_text, match.start()))
+        # Strategy 2: Find Q-format questions (Q1:, Q2:, etc.)
+        q_patterns = [
+            r'(?:^|\n)\s*(Q\d+)[:.]?\s*([^\n]+(?:\n(?!Q\d+)[^\n]*)*)',
+            r'(Q\d+)[:.]?\s*([^Q]{10,}?)(?=Q\d+|$)'
+        ]
         
-        for match in q_matches:
-            q_id = match.group(1)
-            question_text = match.group(2).strip()
-            num_search = re.search(r'\d+', q_id)
-            if num_search:
-                num = int(num_search.group())
-                all_matches.append((num, q_id, question_text, match.start()))
+        for pattern in q_patterns:
+            matches = re.finditer(pattern, text, re.MULTILINE | re.DOTALL)
+            for match in matches:
+                try:
+                    q_id = match.group(1)
+                    question_text = match.group(2).strip()
+                    num_search = re.search(r'\d+', q_id)
+                    if num_search and len(question_text) > 10:
+                        num = int(num_search.group())
+                        all_questions.append((num, q_id, question_text, match.start(), "q_format"))
+                except:
+                    continue
         
-        # Sort by position in text
-        all_matches.sort(key=lambda x: x[3])
+        # Strategy 3: Find "Question X:" format
+        question_patterns = [
+            r'(?:^|\n)\s*Question\s+(\d+)[:.]?\s*([^\n]+(?:\n(?!Question\s+\d+)[^\n]*)*)',
+            r'Question\s+(\d+)[:.]?\s*([^Q]{10,}?)(?=Question\s+\d+|$)'
+        ]
         
-        # Process each question
-        for num, q_id, question_text, start_pos in all_matches:
-            # Get surrounding context for better type detection
-            context_start = max(0, start_pos - 200)
-            context_end = min(len(text), start_pos + len(question_text) + 200)
+        for pattern in question_patterns:
+            matches = re.finditer(pattern, text, re.MULTILINE | re.DOTALL | re.IGNORECASE)
+            for match in matches:
+                try:
+                    num = int(match.group(1))
+                    question_text = match.group(2).strip()
+                    if len(question_text) > 10:
+                        all_questions.append((num, f"Q{num}", question_text, match.start(), "question_format"))
+                except:
+                    continue
+        
+        # Strategy 4: Find questions ending with "?" 
+        question_mark_pattern = r'([A-Z][^?]{20,}?\?)'
+        question_mark_matches = re.finditer(question_mark_pattern, text)
+        question_counter = 1000  # High number to avoid conflicts
+        
+        for match in question_mark_matches:
+            question_text = match.group(1).strip()
+            if len(question_text) > 20 and question_text.count('?') == 1:
+                all_questions.append((question_counter, f"Q{question_counter}", question_text, match.start(), "question_mark"))
+                question_counter += 1
+        
+        # Remove duplicates and sort
+        seen_texts = set()
+        unique_questions = []
+        
+        for num, q_id, text_content, pos, method in all_questions:
+            # Clean text for comparison
+            clean_text = re.sub(r'\s+', ' ', text_content.lower()).strip()
+            if clean_text not in seen_texts and len(clean_text) > 10:
+                seen_texts.add(clean_text)
+                unique_questions.append((num, q_id, text_content, pos, method))
+        
+        # Sort by position in original text
+        unique_questions.sort(key=lambda x: x[3])
+        
+        # Process each question to determine type and options
+        for i, (num, q_id, question_text, start_pos, method) in enumerate(unique_questions):
+            # Get surrounding context
+            context_start = max(0, start_pos - 300)
+            context_end = min(len(text), start_pos + len(question_text) + 300)
             context = text[context_start:context_end].lower()
             
             # Default values
@@ -199,39 +258,41 @@ class PDFProcessor:
             options = []
             
             # Check for multiple choice patterns
-            choice_pattern = r'[a-h]\)\s*([^a-h\)]+?)(?=[a-h]\)|$)'
-            choice_matches = re.findall(choice_pattern, question_text, re.IGNORECASE)
+            mc_patterns = [
+                r'[a-h]\)\s*([^a-h\)]{3,50}?)(?=[a-h]\)|$)',
+                r'[a-h]\.\s*([^a-h\.]{3,50}?)(?=[a-h]\.|$)',
+                r'[a-h]\s*\)\s*([^a-h\)]{3,50}?)(?=[a-h]\s*\)|$)'
+            ]
             
-            if len(choice_matches) >= 2:
-                question_type = "multiple_choice"
-                options = [opt.strip() for opt in choice_matches if opt.strip()]
-                # Clean question text by removing options
-                clean_pattern = r'[a-h]\).*$'
-                question_text = re.sub(clean_pattern, '', question_text, flags=re.DOTALL | re.IGNORECASE)
-                question_text = question_text.strip()
+            for pattern in mc_patterns:
+                choice_matches = re.findall(pattern, question_text, re.IGNORECASE)
+                if len(choice_matches) >= 2:
+                    question_type = "multiple_choice"
+                    options = [opt.strip() for opt in choice_matches if opt.strip()]
+                    # Clean question text
+                    question_text = re.split(r'[a-h][\)\.]', question_text, 1)[0].strip()
+                    break
             
             # Check for Likert scale indicators
             if question_type != "multiple_choice":
                 for pattern in likert_indicators:
                     if re.search(pattern, context, re.IGNORECASE):
                         question_type = "likert"
-                        # Determine scale type
                         if re.search(r'1.*?7|scale.*?7', context):
                             options = ["1", "2", "3", "4", "5", "6", "7"]
                         else:
                             options = ["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"]
                         break
             
-            # Skip if question is too short or appears to be a header
-            if len(question_text.strip()) < 10 or 'section' in question_text.lower():
-                continue
-            
-            questions.append(Question(
-                id=q_id,
-                text=question_text.strip(),
-                type=question_type,
-                options=options
-            ))
+            # Final cleanup and validation
+            question_text = question_text.strip()
+            if len(question_text) >= 10 and not any(skip in question_text.lower() for skip in ['section', 'instructions', 'please answer']):
+                questions.append(Question(
+                    id=q_id,
+                    text=question_text,
+                    type=question_type,
+                    options=options
+                ))
         
         return questions
 
@@ -376,55 +437,122 @@ def main():
                 if pdf_text:
                     st.success("PDF text extracted successfully!")
                     
-                    # Show extracted text (first 500 chars)
+                    # Show extracted text (first 1000 chars for better debugging)
                     with st.expander("View Extracted Text (Preview)"):
-                        st.text(pdf_text[:500] + "..." if len(pdf_text) > 500 else pdf_text)
+                        st.text_area("Extracted PDF Text", pdf_text[:1000], height=200, disabled=True)
+                        if len(pdf_text) > 1000:
+                            st.info(f"Showing first 1000 characters of {len(pdf_text)} total characters")
                     
                     # Parse questionnaire
                     questions = PDFProcessor.parse_questionnaire(pdf_text)
                     st.session_state.questions = questions
                     
-                    st.success(f"Found {len(questions)} questions in the questionnaire")
+                    if len(questions) > 0:
+                        st.success(f"Found {len(questions)} questions in the questionnaire")
+                    else:
+                        st.warning("No questions detected automatically. You can add them manually below.")
                     
-                    # Display questions with quality indicators
-                    st.subheader("Extracted Questions")
+                    # Manual question addition option
+                    st.subheader("Manual Question Management")
                     
-                    for i, question in enumerate(questions):
-                        # Quality indicator
-                        quality = "✅"
-                        issues = []
+                    with st.expander("➕ Add Questions Manually"):
+                        st.info("If automatic detection didn't work, you can add questions manually here.")
                         
-                        if question.type == "multiple_choice" and len(question.options) < 2:
-                            quality = "⚠️"
-                            issues.append("Few options detected")
-                        
-                        if question.type == "likert" and not question.options:
-                            quality = "⚠️"
-                            issues.append("No scale options")
-                        
-                        if len(question.text) < 10:
-                            quality = "❌"
-                            issues.append("Text too short")
-                        
-                        with st.expander(f"{quality} Question {i+1}: {question.id} ({question.type})"):
-                            st.write(f"**Text:** {question.text}")
-                            st.write(f"**Type:** {question.type}")
-                            if question.options:
-                                st.write(f"**Options:** {', '.join(question.options)}")
-                            if issues:
-                                st.warning(f"Issues: {', '.join(issues)}")
+                        with st.form("add_question_form"):
+                            col1, col2 = st.columns([2, 1])
+                            
+                            with col1:
+                                manual_text = st.text_area("Question Text", placeholder="Enter your question here...")
+                            
+                            with col2:
+                                manual_type = st.selectbox("Question Type", ["open_ended", "likert", "multiple_choice"])
+                                
+                                if manual_type == "likert":
+                                    scale_type = st.selectbox("Scale Type", ["5-point", "7-point"])
+                                elif manual_type == "multiple_choice":
+                                    manual_options = st.text_area("Options (one per line)", placeholder="Option 1\nOption 2\nOption 3")
+                            
+                            if st.form_submit_button("Add Question"):
+                                if manual_text.strip():
+                                    # Determine options based on type
+                                    if manual_type == "likert":
+                                        if scale_type == "7-point":
+                                            options = ["1", "2", "3", "4", "5", "6", "7"]
+                                        else:
+                                            options = ["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"]
+                                    elif manual_type == "multiple_choice":
+                                        options = [opt.strip() for opt in manual_options.split('\n') if opt.strip()]
+                                    else:
+                                        options = []
+                                    
+                                    # Add to session state
+                                    new_question = Question(
+                                        id=f"Q{len(st.session_state.questions) + 1}",
+                                        text=manual_text.strip(),
+                                        type=manual_type,
+                                        options=options
+                                    )
+                                    st.session_state.questions.append(new_question)
+                                    st.success("Question added successfully!")
+                                    st.rerun()
                     
-                    # Summary
-                    likert_count = sum(1 for q in questions if q.type == "likert")
-                    mc_count = sum(1 for q in questions if q.type == "multiple_choice")
-                    open_count = len(questions) - likert_count - mc_count
+                    # Show current questions
+                    if st.session_state.questions:
+                        st.subheader("Current Questions")
+                        
+                        for i, question in enumerate(st.session_state.questions):
+                            # Quality indicator
+                            quality = "✅"
+                            issues = []
+                            
+                            if question.type == "multiple_choice" and len(question.options) < 2:
+                                quality = "⚠️"
+                                issues.append("Few options detected")
+                            
+                            if question.type == "likert" and not question.options:
+                                quality = "⚠️"
+                                issues.append("No scale options")
+                            
+                            if len(question.text) < 10:
+                                quality = "❌"
+                                issues.append("Text too short")
+                            
+                            with st.expander(f"{quality} Question {i+1}: {question.id} ({question.type})"):
+                                col1, col2 = st.columns([3, 1])
+                                
+                                with col1:
+                                    st.write(f"**Text:** {question.text}")
+                                    st.write(f"**Type:** {question.type}")
+                                    if question.options:
+                                        st.write(f"**Options:** {', '.join(question.options)}")
+                                    if issues:
+                                        st.warning(f"Issues: {', '.join(issues)}")
+                                
+                                with col2:
+                                    if st.button(f"🗑️ Remove", key=f"remove_{i}"):
+                                        st.session_state.questions.pop(i)
+                                        st.rerun()
+                        
+                        # Clear all questions button
+                        if st.button("🗑️ Clear All Questions", type="secondary"):
+                            st.session_state.questions = []
+                            st.rerun()
+                        
+                        # Summary
+                        likert_count = sum(1 for q in st.session_state.questions if q.type == "likert")
+                        mc_count = sum(1 for q in st.session_state.questions if q.type == "multiple_choice")
+                        open_count = len(st.session_state.questions) - likert_count - mc_count
+                        
+                        st.info(f"""
+                        **Summary:** {len(st.session_state.questions)} questions total
+                        - {likert_count} Likert scale questions
+                        - {mc_count} Multiple choice questions  
+                        - {open_count} Open-ended questions
+                        """)
                     
-                    st.info(f"""
-                    **Summary:** {len(questions)} questions total
-                    - {likert_count} Likert scale questions
-                    - {mc_count} Multiple choice questions  
-                    - {open_count} Open-ended questions
-                    """)
+                    else:
+                        st.info("No questions found. Please use the manual addition tool above to add your questions.")
+
     
     with col2:
         st.header("🎯 Simulation Results")
